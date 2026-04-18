@@ -4,6 +4,7 @@ import {
   LinearGradient,
   Path,
   Rect,
+  rrect,
   Text as SkiaText,
   useFont,
   vec,
@@ -19,6 +20,11 @@ export default function Game() {
   // GAME CONFIG
   const [life, setLife] = useState(100);
   const [gameOver, setGameOver] = useState(false);
+  const gameOverRef = useRef(false);
+  useEffect(() => {
+    gameOverRef.current = gameOver;
+  }, [gameOver]);
+
   const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
 
   // PLAYER
@@ -111,7 +117,7 @@ export default function Game() {
 
     const interval = setInterval(() => {
       // GAME OVER FREEZE
-      if (gameOver) return;
+      if (gameOverRef.current) return;
 
       // spawn bullets
       const now = Date.now();
@@ -315,6 +321,36 @@ export default function Game() {
       onStartShouldSetPanResponder: () => true,
 
       onPanResponderGrant: () => {
+        if (gameOverRef.current) {
+          // SETUP GAME OVER box render
+          const boxWidth = width * 0.7;
+          const boxHeight = 140;
+
+          const boxX = width / 2 - boxWidth / 2;
+          const boxY = height / 2 - boxHeight / 2;
+
+          const radius = 20;
+
+          const roundedRect = rrect(
+            { x: boxX, y: boxY, width: boxWidth, height: boxHeight },
+            radius,
+            radius,
+          );
+
+          // RESET GAME
+          enemies.current = [];
+          bullets.current = [];
+          gates.current = [];
+
+          setLife(100);
+          setScore(0);
+          setShotPower(1);
+          setGameOver(false);
+
+          return;
+        }
+
+        // normal gameplay
         isFiring.current = true;
         lastX = 0;
       },
@@ -339,18 +375,6 @@ export default function Game() {
 
       onPanResponderRelease: () => {
         isFiring.current = false;
-
-        if (gameOver && g.dy > 50) {
-          // reset everything
-          enemies.current = [];
-          bullets.current = [];
-          gates.current = [];
-
-          setLife(100);
-          setScore(0);
-          setShotPower(1);
-          setGameOver(false);
-        }
       },
     }),
   ).current;
@@ -520,18 +544,30 @@ export default function Game() {
 
         {gameOver && font && (
           <>
+            {/* Background Box */}
+            <Rect
+              x={width / 2 - (width * 0.7) / 2}
+              y={height / 2 - 70}
+              width={width * 0.7}
+              height={140}
+              r={20}
+              color="rgba(0,0,0,0.6)"
+            />
+
+            {/* GAME OVER */}
             <SkiaText
               x={width / 2 - font.getTextWidth("GAME OVER") / 2}
-              y={height / 2}
+              y={height / 2 - 10}
               text="GAME OVER"
               font={font}
               color="red"
             />
 
+            {/* Restart */}
             <SkiaText
-              x={width / 2 - font.getTextWidth("Swipe down to restart") / 2}
-              y={height / 2 + 40}
-              text="Swipe down to restart"
+              x={width / 2 - font.getTextWidth("Tap to restart") / 2}
+              y={height / 2 + 30}
+              text="Tap to restart"
               font={font}
               color="white"
             />
