@@ -44,8 +44,13 @@ function Bullet({ data }: any) {
   });
 
   return (
+    /* Tuning guide. 0.1 → current
+    0.08 → slightly smaller
+    0.05 → small / precise
+    0.03 → tiny (hard to see)
+    */
     <mesh ref={mesh}>
-      <sphereGeometry args={[0.1, 8, 8]} />
+      <sphereGeometry args={[0.05, 8, 8]} />
       <meshStandardMaterial color="yellow" />
     </mesh>
   );
@@ -67,8 +72,26 @@ function Enemy({ data }: any) {
 
   return (
     <mesh ref={mesh} position={[data.x, 0.2, data.z]}>
-      <sphereGeometry args={[0.3, 12, 12]} />
+      <sphereGeometry args={[0.25, 12, 12]} />
       <meshStandardMaterial color="red" />
+    </mesh>
+  );
+}
+
+function Gate({ data, side }) {
+  const mesh = useRef();
+
+  useFrame(() => {
+    if (mesh.current) {
+      mesh.current.position.x = side === "left" ? data.left.x : data.right.x;
+      mesh.current.position.z = data.z;
+    }
+  });
+
+  return (
+    <mesh ref={mesh}>
+      <boxGeometry args={[1, 1, 0.2]} />
+      <meshStandardMaterial color="blue" />
     </mesh>
   );
 }
@@ -94,7 +117,14 @@ export default function Index() {
   const ENEMY_SPEED = 0.08;
   const SPAWN_RATE = 1.2;
 
+  // Gate data
+  const gates = useRef([]);
+  const lastGateSpawn = useRef(0);
+  const GATE_SPEED = 0.08;
+  const GATE_SPAWN_RATE = 4;
+
   const [score, setScore] = React.useState(0);
+  const [shotPower, setShotPower] = React.useState(1);
 
   let lastX = 0;
 
@@ -156,9 +186,33 @@ export default function Index() {
         lastSpawnTime.current = time;
       }
 
+      // Spawn Gates
+      if (time - lastGateSpawn.current > GATE_SPAWN_RATE) {
+        gates.current.push({
+          z: -110,
+          left: {
+            x: -1.5,
+            type: "add",
+            value: 10,
+          },
+          right: {
+            x: 1.5,
+            type: "multiply",
+            value: 2,
+          },
+        });
+
+        lastGateSpawn.current = time;
+      }
+
       // 🔥 MOVE ENEMIES
       enemiesRef.current.forEach((e) => {
         e.z += ENEMY_SPEED;
+      });
+
+      // Move Gates
+      gates.current.forEach((g) => {
+        g.z += GATE_SPEED;
       });
 
       // 🔥 CLEANUP
@@ -166,7 +220,10 @@ export default function Index() {
 
       if (isFiring.current) {
         if (time - lastShotTime.current > 1 / FIRE_RATE) {
-          setBullets((prev) => [...prev, { x: playerX.current, z: PLAYER_Z }]);
+          setBullets((prev) => [
+            ...prev,
+            { x: playerX.current, z: PLAYER_Z, power: shotPower },
+          ]);
 
           lastShotTime.current = time;
         }
@@ -186,35 +243,71 @@ export default function Index() {
     let scoreGain = 0;
 
     enemies.forEach((enemy) => {
-      let hit = false;
+      let enemyHit = false;
 
       bullets.forEach((bullet) => {
         const dx = bullet.x - enemy.x;
         const dz = bullet.z - enemy.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
 
-        if (dist < 0.4 && !hit) {
-          hit = true;
-          scoreGain += enemy.power;
+        if (dist < 0.24 && !enemyHit) {
+          enemyHit = true;
+
+          if (bullet.power >= enemy.power) {
+            scoreGain += enemy.power;
+          }
         }
       });
 
-      if (!hit) newEnemies.push(enemy);
+      if (!enemyHit) {
+        newEnemies.push(enemy);
+      }
     });
 
     bullets.forEach((bullet) => {
-      const hitEnemy = enemies.some((enemy) => {
+      const hit = enemies.some((enemy) => {
         const dx = bullet.x - enemy.x;
         const dz = bullet.z - enemy.z;
-        return Math.sqrt(dx * dx + dz * dz) < 0.4;
+        return Math.sqrt(dx * dx + dz * dz) < 0.24;
       });
 
-      if (!hitEnemy) newBullets.push(bullet);
+      if (!hit) {
+        newBullets.push(bullet);
+      }
     });
 
-    // apply results
-    setBullets(newBullets);
     setEnemies(newEnemies);
+    setBullets(newBullets);
+
+    // Gate Collision
+    gates.current.forEach((g) => {
+      if (Math.abs(g.z - PLAYER_Z) < 0.5) {
+        if (playerX.current < 0) {
+          applyGate(g.left);
+        } else {
+          applyGate(g.right);
+        }
+
+        g.passed = true;
+      }
+    });
+
+    gates.current = gates.current.filter((g) => !g.passed);
+
+    // Apply Gate Effect
+    function applyGate(gate) {
+      if (gate.type === "add") {
+        setShotPower((p) => p + gate.value);
+      }
+
+      if (gate.type === "multiply") {
+        setShotPower((p) => p * gate.value);
+      }
+
+      if (gate.type === "divide") {
+        setShotPower((p) => p / gate.value);
+      }
+    }
 
     if (scoreGain > 0) {
       setScore((s) => s + scoreGain);
@@ -267,6 +360,13 @@ export default function Index() {
 
         {enemies.map((e, i) => (
           <Enemy key={i} data={e} />
+        ))}
+
+        {gates.current.map((g, i) => (
+          <React.Fragment key={i}>
+            <Gate data={g} side="left" />
+            <Gate data={g} side="right" />
+          </React.Fragment>
         ))}
       </Canvas>
 
