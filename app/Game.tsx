@@ -4,6 +4,7 @@ import {
   LinearGradient,
   Path,
   Rect,
+  Text as SkiaText,
   useFont,
   vec,
 } from "@shopify/react-native-skia";
@@ -13,11 +14,18 @@ import { Dimensions, PanResponder, Text, View } from "react-native";
 const { width, height } = Dimensions.get("window");
 
 export default function Game() {
-  // Game Font
+  const [tick, setTick] = useState(0);
+
+  // GAME CONFIG
+  const [life, setLife] = useState(100);
+  const [gameOver, setGameOver] = useState(false);
   const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
 
+  // PLAYER
   const playerX = useRef(width / 2);
-  const [tick, setTick] = useState(0);
+  const isFiring = useRef(false);
+  const lastShot = useRef(0);
+  const FIRE_RATE = 500; // ms
 
   // ROAD GEOMETRY
   const roadBottomLeft = width * -0.15; // was -0.05
@@ -42,11 +50,10 @@ export default function Game() {
   }
 
   const bullets = useRef<any[]>([]);
-  const enemies = useRef<any[]>([]);
 
-  const isFiring = useRef(false);
-  const lastShot = useRef(0);
-  const FIRE_RATE = 150; // ms
+  // ENEMIES
+  const enemies = useRef<any[]>([]);
+  const burstFactor = useRef(0);
 
   // COLLIONS
   const HIT_U = 0.04; // horizontal tolerance
@@ -54,13 +61,24 @@ export default function Game() {
 
   // GATES
   const gates = useRef<any[]>([]);
-  const lastGateSpawn = useRef(0);
   const MIN_GATE_TIME = 8000; // 8 seconds
   const MAX_GATE_TIME = 14000; // 14 seconds
   const nextGateTime = useRef(0);
+
   function getRandomGateDelay() {
     return MIN_GATE_TIME + Math.random() * (MAX_GATE_TIME - MIN_GATE_TIME);
   }
+
+  function getGateLabel(gate) {
+    if (gate.type === "add") return `+${gate.value}`;
+    if (gate.type === "multiply") return `×${gate.value}`;
+    if (gate.type === "divide") return `÷${gate.value}`;
+    return "";
+  }
+
+  // collision
+  const GATE_HIT_X_PX = 60; // horizontal tolerance
+  const GATE_HIT_Y_PX = 40; // vertical tolerance
   // GATES
 
   // GATE Effects
@@ -84,7 +102,7 @@ export default function Game() {
   const [score, setScore] = useState(0);
 
   //LOGGING DEBUG
-  console.log("gates:", gates.current.length);
+  //console.log("gates:", gates.current.length);
 
   // 🎯 GAME LOOP
   useEffect(() => {
@@ -92,6 +110,9 @@ export default function Game() {
     nextGateTime.current = Date.now() + getRandomGateDelay();
 
     const interval = setInterval(() => {
+      // GAME OVER FREEZE
+      if (gameOver) return;
+
       // spawn bullets
       const now = Date.now();
 
@@ -115,15 +136,25 @@ export default function Game() {
       });
 
       // spawn enemies
-      if (Math.random() < 0.05) {
+      const time = Date.now() * 0.001;
+
+      // smooth wave between 0 and 1
+      const raw = (Math.sin(time) + 1) / 2;
+
+      // squash low values → longer quiet periods
+      burstFactor.current = Math.pow(raw, 3);
+
+      // spawn chance
+      const chance =
+        0.001 + // baseline (almost nothing)
+        burstFactor.current * 0.25; // burst intensity - maybe ramp this up as player gets better  - YES DO THIS
+
+      if (Math.random() < chance) {
         const y = roadTopY;
 
         const u = ROAD_MARGIN + Math.random() * (1 - ROAD_MARGIN * 2);
 
-        enemies.current.push({
-          u,
-          y,
-        });
+        enemies.current.push({ u, y });
       }
 
       // move enemies
@@ -215,20 +246,20 @@ export default function Game() {
       const playerY = height * 0.85;
 
       gates.current.forEach((g) => {
-        if (Math.abs(g.y - playerY) < 20 && !g.passed) {
-          const { left, right } = getRoadEdges(playerY);
-          const playerU = (playerX.current - left) / (right - left);
+        [g.left, g.right].forEach((gate) => {
+          if (gate.passed) return;
 
-          const distLeft = Math.abs(playerU - g.left.u);
-          const distRight = Math.abs(playerU - g.right.u);
+          const { left, right } = getRoadEdges(g.y);
+          const gateX = left + gate.u * (right - left);
 
-          const chosenGate = distLeft < distRight ? g.left : g.right;
+          const dx = Math.abs(playerX.current - gateX);
+          const dy = Math.abs(playerY - g.y);
 
-          if (!chosenGate.passed) {
-            applyGate(chosenGate);
-            chosenGate.passed = true;
+          if (dx < GATE_HIT_X_PX && dy < GATE_HIT_Y_PX) {
+            applyGate(gate);
+            gate.passed = true;
           }
-        }
+        });
       });
       // GATE Effects
 
@@ -237,10 +268,37 @@ export default function Game() {
         setScore((s) => s + scoreGain);
       }
 
-      // cleanup
+      // CLEANUP
       bullets.current = bullets.current.filter((b) => b.y > roadTopY);
-      enemies.current = enemies.current.filter((e) => e.y < height);
       gates.current = gates.current.filter((g) => g.y < height);
+
+      // GAME OVER CHECK
+      let lifeLoss = 0;
+
+      const remainingEnemies = [];
+
+      enemies.current.forEach((e) => {
+        if (e.y >= height) {
+          lifeLoss++;
+        } else {
+          remainingEnemies.push(e);
+        }
+      });
+
+      enemies.current = remainingEnemies;
+
+      if (lifeLoss > 0) {
+        setLife((prev) => {
+          const newLife = Math.max(0, prev - lifeLoss);
+
+          if (newLife <= 0) {
+            setGameOver(true);
+          }
+
+          return newLife;
+        });
+      }
+      // GAME OVER CHECK
 
       // trigger redraw
       setTick((t) => t + 1);
@@ -281,6 +339,18 @@ export default function Game() {
 
       onPanResponderRelease: () => {
         isFiring.current = false;
+
+        if (gameOver && g.dy > 50) {
+          // reset everything
+          enemies.current = [];
+          bullets.current = [];
+          gates.current = [];
+
+          setLife(100);
+          setScore(0);
+          setShotPower(1);
+          setGameOver(false);
+        }
       },
     }),
   ).current;
@@ -306,7 +376,7 @@ export default function Game() {
           zIndex: 10,
         }}
       >
-        <Text style={{ color: "black", fontSize: 16 }}>Power: {shotPower}</Text>
+        <Text style={{ color: "black", fontSize: 20 }}>Power: {shotPower}</Text>
       </View>
 
       <Canvas style={{ flex: 1 }}>
@@ -337,6 +407,16 @@ export default function Game() {
                 Z`}
           color="#222"
         />
+
+        {font && (
+          <SkiaText
+            x={width / 2 - font.getTextWidth(`LIFE: ${life}`) / 2}
+            y={roadTopY - 20}
+            text={`LIFE: ${life}`}
+            font={font}
+            color="black"
+          />
+        )}
 
         {/* Player */}
         <Circle cx={playerX.current} cy={height * 0.85} r={12} color="orange" />
@@ -369,10 +449,25 @@ export default function Game() {
 
             const x = left + gate.u * (right - left);
 
-            const widthPx = 80;
-            const heightPx = 60;
-
             const opacity = gate.passed ? 0.3 : 1;
+
+            if (!font) return null;
+
+            const label = getGateLabel(gate);
+
+            // perspective scale
+            const baseWidth = 80;
+            const baseHeight = 60;
+
+            const t = (g.y - roadTopY) / (height - roadTopY); // 0 → 1
+            const scale = 0.4 + t * 1.2; // tweakable
+
+            const widthPx = baseWidth * scale;
+            const heightPx = baseHeight * scale;
+
+            // font centering
+            const fontSize = 20 * scale;
+            const textWidth = font.getTextWidth(label);
 
             return (
               <Rect
@@ -391,6 +486,14 @@ export default function Game() {
                       ? ["rgba(150,150,150,0.4)", "rgba(150,150,150,0.0)"]
                       : ["rgba(0,255,0,0.5)", "rgba(0,255,0,0.0)"]
                   }
+                />
+
+                <SkiaText
+                  x={x - textWidth / 2}
+                  y={g.y - heightPx / 2}
+                  text={label}
+                  font={font}
+                  color={gate.passed ? "rgba(200,200,200,0.6)" : "white"}
                 />
               </Rect>
             );
@@ -414,6 +517,26 @@ export default function Game() {
             ]}
           />
         </Rect>
+
+        {gameOver && font && (
+          <>
+            <SkiaText
+              x={width / 2 - font.getTextWidth("GAME OVER") / 2}
+              y={height / 2}
+              text="GAME OVER"
+              font={font}
+              color="red"
+            />
+
+            <SkiaText
+              x={width / 2 - font.getTextWidth("Swipe down to restart") / 2}
+              y={height / 2 + 40}
+              text="Swipe down to restart"
+              font={font}
+              color="white"
+            />
+          </>
+        )}
       </Canvas>
     </View>
   );
