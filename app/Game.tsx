@@ -4,7 +4,6 @@ import {
   LinearGradient,
   Path,
   Rect,
-  rrect,
   Text as SkiaText,
   useFont,
   vec,
@@ -17,21 +16,47 @@ const { width, height } = Dimensions.get("window");
 export default function Game() {
   const [tick, setTick] = useState(0);
 
+  const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
+
   // GAME CONFIG
   const [life, setLife] = useState(100);
   const [gameOver, setGameOver] = useState(false);
   const gameOverRef = useRef(false);
+
   useEffect(() => {
     gameOverRef.current = gameOver;
   }, [gameOver]);
+  // GAME CONFIG
 
-  const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
-
-  // PLAYER
-  const playerX = useRef(width / 2);
+  // PLAYER (AND BUBS)
+  const PLAYER_X = useRef(width / 2);
+  const PLAYER_Y = height * 0.85;
   const isFiring = useRef(false);
   const lastShot = useRef(0);
-  const FIRE_RATE = 500; // ms
+  const bullets = useRef<any[]>([]);
+  const [fireRate, setFireRate] = useState(500);
+  const bubsRef = useRef<any[]>([]);
+  const fireRateRef = useRef(500);
+  const shotIdRef = useRef(0);
+  const RIPPLE_STEP = 30;
+  const MAX_RIPPLE_DELAY = 100;
+
+  useEffect(() => {
+    fireRateRef.current = fireRate;
+  }, [fireRate]);
+
+  function getBubOffsets(count) {
+    const offsets = [];
+
+    for (let i = 0; i < count; i++) {
+      const side = i % 2 === 0 ? 1 : -1;
+      const step = Math.floor(i / 2) + 1;
+
+      offsets.push(side * step * 0.05);
+    }
+
+    return offsets;
+  }
 
   // ROAD GEOMETRY
   const roadBottomLeft = width * -0.15; // was -0.05
@@ -43,7 +68,6 @@ export default function Game() {
   const ROAD_MARGIN = 0.12; // 12% on each side (tweak this)
 
   const roadTopY = height * 0.2; // slightly further up
-  // ROAD GEOMETRY
 
   function getRoadEdges(y) {
     const t = (y - roadTopY) / (height - roadTopY);
@@ -54,14 +78,13 @@ export default function Game() {
 
     return { left, right };
   }
-
-  const bullets = useRef<any[]>([]);
+  // ROAD GEOMETRY
 
   // ENEMIES
   const enemies = useRef<any[]>([]);
   const burstFactor = useRef(0);
 
-  // COLLIONS
+  // COLLISIONS (BULLETS)
   const HIT_U = 0.04; // horizontal tolerance
   const HIT_Y = 12; // vertical tolerance (pixels)
 
@@ -71,36 +94,74 @@ export default function Game() {
   const MAX_GATE_TIME = 14000; // 14 seconds
   const nextGateTime = useRef(0);
 
+  const GATE_POOLS = [
+    // SAFE
+    [
+      { type: "bub", value: 1 },
+      { type: "life", value: 10 },
+    ],
+
+    // BUB GROWTH
+    [
+      { type: "bub", value: 1 },
+      { type: "bub", value: 2 },
+    ],
+
+    // RISK
+    [
+      { type: "bub", value: 2 },
+      { type: "life", value: -15 },
+    ],
+
+    // UTILITY
+    [
+      { type: "fastFire", value: 1 },
+      { type: "life", value: 15 },
+    ],
+  ];
+
   function getRandomGateDelay() {
     return MIN_GATE_TIME + Math.random() * (MAX_GATE_TIME - MIN_GATE_TIME);
   }
 
   function getGateLabel(gate) {
-    if (gate.type === "add") return `+${gate.value}`;
-    if (gate.type === "multiply") return `×${gate.value}`;
-    if (gate.type === "divide") return `÷${gate.value}`;
+    if (gate.type === "bub") return `+${gate.value} bub`;
+    if (gate.type === "life")
+      return `${gate.value > 0 ? "+" : ""}${gate.value} ❤️`;
+    if (gate.type === "fastFire") return "⚡";
     return "";
   }
 
-  // collision
+  // COLLISION (GATES)
   const GATE_HIT_X_PX = 60; // horizontal tolerance
   const GATE_HIT_Y_PX = 40; // vertical tolerance
   // GATES
 
   // GATE Effects
-  const [shotPower, setShotPower] = useState(1);
-
+  // SPAWN BUBS
   function applyGate(gate) {
-    if (gate.type === "add") {
-      setShotPower((p) => p + gate.value);
+    if (gate.type === "bub") {
+      for (let i = 0; i < gate.value; i++) {
+        bubsRef.current.push({
+          u: 0.5,
+          y: PLAYER_Y,
+
+          driftX: 0,
+          driftY: 0,
+        });
+      }
     }
 
-    if (gate.type === "multiply") {
-      setShotPower((p) => p * gate.value);
+    if (gate.type === "life") {
+      setLife((l) => Math.max(0, Math.min(100, l + gate.value)));
     }
 
-    if (gate.type === "divide") {
-      setShotPower((p) => p / gate.value);
+    if (gate.type === "fastFire") {
+      setFireRate((r) => Math.max(100, r * 0.6));
+    }
+
+    if (gate.type === "slowFire") {
+      setFireRate((r) => Math.min(1000, r * 1.5));
     }
   }
   // GATE Effects
@@ -122,14 +183,26 @@ export default function Game() {
       // spawn bullets
       const now = Date.now();
 
-      if (isFiring.current && now - lastShot.current > FIRE_RATE) {
+      if (isFiring.current && now - lastShot.current > fireRateRef.current) {
         const { left, right } = getRoadEdges(height * 0.82);
-        const u = (playerX.current - left) / (right - left);
+        const playerU = (PLAYER_X.current - left) / (right - left);
 
+        const offsets = [0, ...getBubOffsets(bubsRef.current)];
+
+        const shotId = shotIdRef.current++;
+
+        // player shot
         bullets.current.push({
-          u,
+          u: playerU,
           y: height * 0.82,
-          power: shotPower,
+        });
+
+        // bub shots
+        bubsRef.current.forEach((bub) => {
+          bullets.current.push({
+            u: bub.u,
+            y: height * 0.82,
+          });
         });
 
         lastShot.current = now;
@@ -173,24 +246,44 @@ export default function Game() {
         e.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, e.u));
       });
 
+      // move Bubs
+      bubsRef.current.forEach((bub, i) => {
+        const { left, right } = getRoadEdges(PLAYER_Y);
+        const playerU = (PLAYER_X.current - left) / (right - left);
+
+        const roadWidth = right - left;
+        const driftURange = 20 / roadWidth;
+
+        // Occasionally pick a new drift target
+        if (!bub.nextDriftTime || Date.now() > bub.nextDriftTime) {
+          bub.driftX = (Math.random() - 0.5) * 2 * driftURange;
+          bub.driftY = (Math.random() - 0.5) * 40; // ±20px
+
+          bub.nextDriftTime = Date.now() + 300 + Math.random() * 700;
+        }
+
+        // Target position = player + drift
+        const targetU = playerU + bub.driftX;
+        const targetY = PLAYER_Y + bub.driftY;
+
+        // Smooth follow (rubber band)
+        bub.u += (targetU - bub.u) * 0.08;
+        bub.y += (targetY - bub.y) * 0.08;
+
+        // Clamp to road
+        bub.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, bub.u));
+      });
+
       // spawn gates
       if (now > nextGateTime.current) {
         const y = roadTopY + 100;
 
+        const pool = GATE_POOLS[Math.floor(Math.random() * GATE_POOLS.length)];
+
         gates.current.push({
           y,
-          left: {
-            u: 0.3,
-            type: "add",
-            value: 10,
-            passed: false,
-          },
-          right: {
-            u: 0.7,
-            type: "multiply",
-            value: 2,
-            passed: false,
-          },
+          left: { ...pool[0], u: 0.3, passed: false },
+          right: { ...pool[1], u: 0.7, passed: false },
         });
 
         // schedule next spawn
@@ -224,9 +317,7 @@ export default function Game() {
 
           if (du < HIT_U && dy < dynamicHitY && !hit) {
             hit = true;
-            if (bullet.power >= enemy.power ?? 1) {
-              scoreGain += enemy.power ?? 1;
-            }
+            scoreGain += 1;
           }
         });
 
@@ -249,8 +340,6 @@ export default function Game() {
       // COLLISIONS
 
       // GATE Effects
-      const playerY = height * 0.85;
-
       gates.current.forEach((g) => {
         [g.left, g.right].forEach((gate) => {
           if (gate.passed) return;
@@ -258,8 +347,8 @@ export default function Game() {
           const { left, right } = getRoadEdges(g.y);
           const gateX = left + gate.u * (right - left);
 
-          const dx = Math.abs(playerX.current - gateX);
-          const dy = Math.abs(playerY - g.y);
+          const dx = Math.abs(PLAYER_X.current - gateX);
+          const dy = Math.abs(PLAYER_Y - g.y);
 
           if (dx < GATE_HIT_X_PX && dy < GATE_HIT_Y_PX) {
             applyGate(gate);
@@ -322,21 +411,6 @@ export default function Game() {
 
       onPanResponderGrant: () => {
         if (gameOverRef.current) {
-          // SETUP GAME OVER box render
-          const boxWidth = width * 0.7;
-          const boxHeight = 140;
-
-          const boxX = width / 2 - boxWidth / 2;
-          const boxY = height / 2 - boxHeight / 2;
-
-          const radius = 20;
-
-          const roundedRect = rrect(
-            { x: boxX, y: boxY, width: boxWidth, height: boxHeight },
-            radius,
-            radius,
-          );
-
           // RESET GAME
           enemies.current = [];
           bullets.current = [];
@@ -344,7 +418,7 @@ export default function Game() {
 
           setLife(100);
           setScore(0);
-          setShotPower(1);
+          setFireRate(500);
           setGameOver(false);
 
           return;
@@ -359,17 +433,17 @@ export default function Game() {
         const delta = g.dx - lastX;
         lastX = g.dx;
 
-        playerX.current += delta * 1.4; // higher = more sensitivity
+        PLAYER_X.current += delta * 1.4; // higher = more sensitivity
 
         // clamp to screen
-        //playerX.current = Math.max(20, Math.min(width - 20, playerX.current));
+        //PLAYER_X.current = Math.max(20, Math.min(width - 20, PLAYER_X.current));
 
         // clamp to road - not sure if I like this or not
-        const { left, right } = getRoadEdges(height * 0.85);
+        const { left, right } = getRoadEdges(PLAYER_Y);
 
-        playerX.current = Math.max(
+        PLAYER_X.current = Math.max(
           left + 10,
-          Math.min(right - 10, playerX.current),
+          Math.min(right - 10, PLAYER_X.current),
         );
       },
 
@@ -390,17 +464,6 @@ export default function Game() {
         }}
       >
         <Text style={{ color: "black", fontSize: 20 }}>Score: {score}</Text>
-      </View>
-
-      <View
-        style={{
-          position: "absolute",
-          top: 60,
-          right: 20,
-          zIndex: 10,
-        }}
-      >
-        <Text style={{ color: "black", fontSize: 20 }}>Power: {shotPower}</Text>
       </View>
 
       <Canvas style={{ flex: 1 }}>
@@ -443,7 +506,15 @@ export default function Game() {
         )}
 
         {/* Player */}
-        <Circle cx={playerX.current} cy={height * 0.85} r={12} color="orange" />
+        <Circle cx={PLAYER_X.current} cy={PLAYER_Y} r={12} color="orange" />
+
+        {/* Bubs */}
+        {bubsRef.current.map((b, i) => {
+          const { left, right } = getRoadEdges(b.y);
+          const x = left + b.u * (right - left);
+
+          return <Circle key={i} cx={x} cy={b.y} r={8} color="#00ffcc" />;
+        })}
 
         {/* Bullets */}
         {bullets.current.map((b, i) => {
@@ -490,7 +561,6 @@ export default function Game() {
             const heightPx = baseHeight * scale;
 
             // font centering
-            const fontSize = 20 * scale;
             const textWidth = font.getTextWidth(label);
 
             return (
