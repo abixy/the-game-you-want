@@ -37,13 +37,22 @@ export default function Game() {
   const [fireRate, setFireRate] = useState(500);
   const bubsRef = useRef<any[]>([]);
   const fireRateRef = useRef(500);
-  const shotIdRef = useRef(0);
-  const RIPPLE_STEP = 30;
-  const MAX_RIPPLE_DELAY = 100;
+  const MAX_BUBS = 5;
+  const RIPPLE_STEP = 50;
+  const MAX_RIPPLE_DELAY = 200;
 
   useEffect(() => {
     fireRateRef.current = fireRate;
   }, [fireRate]);
+
+  // This is for Bub ripple fire at their own coords
+  function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
 
   function getBubOffsets(count) {
     const offsets = [];
@@ -103,14 +112,14 @@ export default function Game() {
 
     // BUB GROWTH
     [
-      { type: "bub", value: 1 },
+      { type: "life", value: 30 },
       { type: "bub", value: 2 },
     ],
 
     // RISK
     [
-      { type: "bub", value: 2 },
-      { type: "life", value: -15 },
+      { type: "bub", value: 1 },
+      { type: "life", value: 15 },
     ],
 
     // UTILITY
@@ -126,9 +135,13 @@ export default function Game() {
 
   function getGateLabel(gate) {
     if (gate.type === "bub") return `+${gate.value} bub`;
-    if (gate.type === "life")
-      return `${gate.value > 0 ? "+" : ""}${gate.value} ❤️`;
-    if (gate.type === "fastFire") return "⚡";
+
+    if (gate.type === "life") {
+      return `${gate.value > 0 ? "+" : ""}${gate.value} HP`;
+    }
+
+    if (gate.type === "fastFire") return "Fast Fire";
+
     return "";
   }
 
@@ -142,10 +155,11 @@ export default function Game() {
   function applyGate(gate) {
     if (gate.type === "bub") {
       for (let i = 0; i < gate.value; i++) {
+        if (bubsRef.current.length >= MAX_BUBS) break; // limit number of bubs!
+
         bubsRef.current.push({
           u: 0.5,
           y: PLAYER_Y,
-
           driftX: 0,
           driftY: 0,
         });
@@ -187,22 +201,31 @@ export default function Game() {
         const { left, right } = getRoadEdges(height * 0.82);
         const playerU = (PLAYER_X.current - left) / (right - left);
 
-        const offsets = [0, ...getBubOffsets(bubsRef.current)];
-
-        const shotId = shotIdRef.current++;
-
-        // player shot
-        bullets.current.push({
-          u: playerU,
-          y: height * 0.82,
-        });
-
-        // bub shots
-        bubsRef.current.forEach((bub) => {
-          bullets.current.push({
-            u: bub.u,
+        const shooters = [
+          // player is always included
+          {
+            u: playerU,
             y: height * 0.82,
-          });
+          },
+
+          // all bubs
+          ...bubsRef.current.map((b) => ({
+            u: b.u,
+            y: b.y,
+          })),
+        ];
+
+        const shuffled = shuffle([...shooters]);
+
+        shuffled.forEach((shooter, i) => {
+          const delay = Math.min(i * RIPPLE_STEP, MAX_RIPPLE_DELAY);
+
+          setTimeout(() => {
+            bullets.current.push({
+              u: Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, shooter.u)),
+              y: shooter.y,
+            });
+          }, delay);
         });
 
         lastShot.current = now;
@@ -252,12 +275,12 @@ export default function Game() {
         const playerU = (PLAYER_X.current - left) / (right - left);
 
         const roadWidth = right - left;
-        const driftURange = 20 / roadWidth;
+        const driftURange = 60 / roadWidth;
 
         // Occasionally pick a new drift target
         if (!bub.nextDriftTime || Date.now() > bub.nextDriftTime) {
           bub.driftX = (Math.random() - 0.5) * 2 * driftURange;
-          bub.driftY = (Math.random() - 0.5) * 40; // ±20px
+          bub.driftY = (Math.random() - 0.5) * 80; // ±20px
 
           bub.nextDriftTime = Date.now() + 300 + Math.random() * 700;
         }
@@ -266,9 +289,12 @@ export default function Game() {
         const targetU = playerU + bub.driftX;
         const targetY = PLAYER_Y + bub.driftY;
 
+        const jitter = (Math.random() - 0.5) * 0.01;
+        bub.u += jitter;
+
         // Smooth follow (rubber band)
-        bub.u += (targetU - bub.u) * 0.08;
-        bub.y += (targetY - bub.y) * 0.08;
+        bub.u += (targetU - bub.u) * 0.05;
+        bub.y += (targetY - bub.y) * 0.05;
 
         // Clamp to road
         bub.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, bub.u));
@@ -276,7 +302,7 @@ export default function Game() {
 
       // spawn gates
       if (now > nextGateTime.current) {
-        const y = roadTopY + 100;
+        const y = roadTopY + 200;
 
         const pool = GATE_POOLS[Math.floor(Math.random() * GATE_POOLS.length)];
 
@@ -302,6 +328,8 @@ export default function Game() {
       // COLLISIONS
       const newBullets = [];
       const newEnemies = [];
+      const PLAYER_HIT_RADIUS = 14;
+      const BUB_HIT_RADIUS = 10;
 
       let scoreGain = 0;
 
@@ -367,33 +395,82 @@ export default function Game() {
       bullets.current = bullets.current.filter((b) => b.y > roadTopY);
       gates.current = gates.current.filter((g) => g.y < height);
 
+      // Enemy collisions against Player and Bubs - losing life for each, plus removing colliding Bub
       // GAME OVER CHECK
+      const survivors = [];
       let lifeLoss = 0;
 
-      const remainingEnemies = [];
+      enemies.current.forEach((enemy) => {
+        let hit = false;
 
-      enemies.current.forEach((e) => {
-        if (e.y >= height) {
+        const { left, right } = getRoadEdges(enemy.y);
+        const enemyX = left + enemy.u * (right - left);
+
+        // 🔴 Check PLAYER collision
+        const dxPlayer = Math.abs(enemyX - PLAYER_X.current);
+        const dyPlayer = Math.abs(enemy.y - PLAYER_Y);
+
+        if (dxPlayer < PLAYER_HIT_RADIUS && dyPlayer < PLAYER_HIT_RADIUS) {
           lifeLoss++;
-        } else {
-          remainingEnemies.push(e);
+          hit = true;
+        }
+
+        // 🔵 Check BUB collisions (only if not already hit player)
+        if (!hit) {
+          for (let i = 0; i < bubsRef.current.length; i++) {
+            const bub = bubsRef.current[i];
+
+            const { left, right } = getRoadEdges(bub.y);
+            const bubX = left + bub.u * (right - left);
+
+            const dx = Math.abs(enemyX - bubX);
+            const dy = Math.abs(enemy.y - bub.y);
+
+            if (dx < BUB_HIT_RADIUS && dy < BUB_HIT_RADIUS) {
+              // remove THIS bub
+              bubsRef.current.splice(i, 1);
+
+              lifeLoss++;
+              hit = true;
+              break;
+            }
+          }
+        }
+
+        if (!hit) {
+          survivors.push(enemy);
         }
       });
 
-      enemies.current = remainingEnemies;
+      enemies.current = survivors;
 
+      const stillAlive = [];
+
+      enemies.current.forEach((e) => {
+        if (e.y >= height) {
+          lifeLoss++; // 👈 lose life when enemy escapes
+        } else {
+          stillAlive.push(e);
+        }
+      });
+
+      enemies.current = stillAlive;
+
+      // apply life loss
       if (lifeLoss > 0) {
         setLife((prev) => {
           const newLife = Math.max(0, prev - lifeLoss);
 
           if (newLife <= 0) {
             setGameOver(true);
+            bubsRef.current = [];
           }
 
           return newLife;
         });
       }
       // GAME OVER CHECK
+      // Enemy collisions against Player and Bubs - losing life for each, plus removing colliding Bub
 
       // trigger redraw
       setTick((t) => t + 1);
@@ -505,9 +582,6 @@ export default function Game() {
           />
         )}
 
-        {/* Player */}
-        <Circle cx={PLAYER_X.current} cy={PLAYER_Y} r={12} color="orange" />
-
         {/* Bubs */}
         {bubsRef.current.map((b, i) => {
           const { left, right } = getRoadEdges(b.y);
@@ -515,6 +589,9 @@ export default function Game() {
 
           return <Circle key={i} cx={x} cy={b.y} r={8} color="#00ffcc" />;
         })}
+
+        {/* Player */}
+        <Circle cx={PLAYER_X.current} cy={PLAYER_Y} r={12} color="orange" />
 
         {/* Bullets */}
         {bullets.current.map((b, i) => {
