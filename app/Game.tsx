@@ -13,157 +13,148 @@ import { Dimensions, PanResponder, Text, View } from "react-native";
 
 const { width, height } = Dimensions.get("window");
 
+// ======================================================
+// CONFIG + SYSTEM IMPORTS
+// ======================================================
+import {
+  GATE_HIT_X_PX,
+  GATE_HIT_Y_PX,
+  MAX_BUBS,
+} from "../game/config/gameConfig";
+
+import { spawnBubs, updateBubs } from "../game/systems/bubs";
+import { handleCollisions } from "../game/systems/collisions";
+import { spawnEnemies, updateEnemies } from "../game/systems/enemies";
+import {
+  cleanupGates,
+  handleGateEffects,
+  spawnGates,
+  updateGates,
+} from "../game/systems/gates";
+import { fireShots } from "../game/systems/shooting";
+
+import { createRoad } from "../game/utils/road";
+
+// ======================================================
+// MAIN COMPONENT
+// ======================================================
 export default function Game() {
   const [tick, setTick] = useState(0);
-
   const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
 
-  // GAME CONFIG
+  // ======================================================
+  // GAME STATE
+  // ======================================================
   const [life, setLife] = useState(100);
+  const [score, setScore] = useState(0);
   const [gameOver, setGameOver] = useState(false);
-  const gameOverRef = useRef(false);
 
+  const gameOverRef = useRef(false);
   useEffect(() => {
     gameOverRef.current = gameOver;
   }, [gameOver]);
-  // GAME CONFIG
 
-  // PLAYER (AND BUBS)
+  // ======================================================
+  // ROAD GEOMETRY (PURE)
+  // ======================================================
+  const roadBottomLeft = width * -0.15;
+  const roadBottomRight = width * 1.15;
+  const roadTopLeft = width * 0.34;
+  const roadTopRight = width * 0.66;
+  const ROAD_MARGIN = 0.12;
+  const roadTopY = height * 0.2;
+
+  const getRoadEdges = createRoad({
+    roadTopY,
+    height,
+    roadTopLeft,
+    roadTopRight,
+    roadBottomLeft,
+    roadBottomRight,
+  });
+
+  // ======================================================
+  // PLAYER + SHOOTING STATE
+  // ======================================================
   const PLAYER_X = useRef(width / 2);
   const PLAYER_Y = height * 0.85;
+
   const isFiring = useRef(false);
   const lastShot = useRef(0);
+
   const bullets = useRef<any[]>([]);
   const [fireRate, setFireRate] = useState(500);
-  const bubsRef = useRef<any[]>([]);
   const fireRateRef = useRef(500);
-  const MAX_BUBS = 5;
-  const RIPPLE_STEP = 50;
-  const MAX_RIPPLE_DELAY = 200;
 
   useEffect(() => {
     fireRateRef.current = fireRate;
   }, [fireRate]);
 
-  // This is for Bub ripple fire at their own coords
-  function shuffle(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
-  }
+  // ======================================================
+  // BUB SYSTEM STATE
+  // ======================================================
+  const bubsRef = useRef<any[]>([]);
 
-  function getBubOffsets(count) {
-    const offsets = [];
-
-    for (let i = 0; i < count; i++) {
-      const side = i % 2 === 0 ? 1 : -1;
-      const step = Math.floor(i / 2) + 1;
-
-      offsets.push(side * step * 0.05);
-    }
-
-    return offsets;
-  }
-
-  // ROAD GEOMETRY
-  const roadBottomLeft = width * -0.15; // was -0.05
-  const roadBottomRight = width * 1.15; // was 1.05
-
-  const roadTopLeft = width * 0.34; // was ~0.38
-  const roadTopRight = width * 0.66; // was ~0.62
-
-  const ROAD_MARGIN = 0.12; // 12% on each side (tweak this)
-
-  const roadTopY = height * 0.2; // slightly further up
-
-  function getRoadEdges(y) {
-    const t = (y - roadTopY) / (height - roadTopY);
-
-    const left = roadTopLeft + t * (roadBottomLeft - roadTopLeft);
-
-    const right = roadTopRight + t * (roadBottomRight - roadTopRight);
-
-    return { left, right };
-  }
-  // ROAD GEOMETRY
-
-  // ENEMIES
+  // ======================================================
+  // ENEMY SYSTEM STATE
+  // ======================================================
   const enemies = useRef<any[]>([]);
   const burstFactor = useRef(0);
 
-  // COLLISIONS (BULLETS)
-  const HIT_U = 0.04; // horizontal tolerance
-  const HIT_Y = 12; // vertical tolerance (pixels)
-
-  // GATES
+  // ======================================================
+  // GATE SYSTEM STATE
+  // ======================================================
   const gates = useRef<any[]>([]);
-  const MIN_GATE_TIME = 8000; // 8 seconds
-  const MAX_GATE_TIME = 14000; // 14 seconds
   const nextGateTime = useRef(0);
 
+  const MIN_GATE_TIME = 8000;
+  const MAX_GATE_TIME = 14000;
+
+  function getRandomGateDelay() {
+    return MIN_GATE_TIME + Math.random() * (MAX_GATE_TIME - MIN_GATE_TIME);
+  }
+
   const GATE_POOLS = [
-    // SAFE
     [
       { type: "bub", value: 1 },
       { type: "life", value: 10 },
     ],
-
-    // BUB GROWTH
     [
       { type: "life", value: 30 },
       { type: "bub", value: 2 },
     ],
-
-    // RISK
     [
       { type: "bub", value: 1 },
       { type: "life", value: 15 },
     ],
-
-    // UTILITY
     [
       { type: "fastFire", value: 1 },
       { type: "life", value: 15 },
     ],
   ];
 
-  function getRandomGateDelay() {
-    return MIN_GATE_TIME + Math.random() * (MAX_GATE_TIME - MIN_GATE_TIME);
-  }
-
+  // ======================================================
+  // PURE HELPERS (NO SIDE EFFECTS)
+  // ======================================================
   function getGateLabel(gate) {
     if (gate.type === "bub") return `+${gate.value} bub`;
-
-    if (gate.type === "life") {
+    if (gate.type === "life")
       return `${gate.value > 0 ? "+" : ""}${gate.value} HP`;
-    }
-
     if (gate.type === "fastFire") return "Fast Fire";
-
     return "";
   }
 
-  // COLLISION (GATES)
-  const GATE_HIT_X_PX = 60; // horizontal tolerance
-  const GATE_HIT_Y_PX = 40; // vertical tolerance
-  // GATES
-
-  // GATE Effects
-  // SPAWN BUBS
+  // ======================================================
+  // GATE EFFECTS (SIDE EFFECTS)
+  // ======================================================
   function applyGate(gate) {
     if (gate.type === "bub") {
-      for (let i = 0; i < gate.value; i++) {
-        if (bubsRef.current.length >= MAX_BUBS) break; // limit number of bubs!
-
-        bubsRef.current.push({
-          u: 0.5,
-          y: PLAYER_Y,
-          driftX: 0,
-          driftY: 0,
-        });
-      }
+      spawnBubs({
+        bubs: bubsRef,
+        count: gate.value,
+        MAX_BUBS,
+        PLAYER_Y,
+      });
     }
 
     if (gate.type === "life") {
@@ -178,308 +169,131 @@ export default function Game() {
       setFireRate((r) => Math.min(1000, r * 1.5));
     }
   }
-  // GATE Effects
 
-  const [score, setScore] = useState(0);
-
-  //LOGGING DEBUG
-  //console.log("gates:", gates.current.length);
-
-  // 🎯 GAME LOOP
+  // ======================================================
+  // MAIN GAME LOOP
+  // ======================================================
   useEffect(() => {
-    // begin GATES
     nextGateTime.current = Date.now() + getRandomGateDelay();
 
     const interval = setInterval(() => {
-      // GAME OVER FREEZE
       if (gameOverRef.current) return;
 
-      // spawn bullets
       const now = Date.now();
 
+      // ----------------------------
+      // SHOOTING
+      // ----------------------------
       if (isFiring.current && now - lastShot.current > fireRateRef.current) {
         const { left, right } = getRoadEdges(height * 0.82);
         const playerU = (PLAYER_X.current - left) / (right - left);
 
-        const shooters = [
-          // player is always included
-          {
-            u: playerU,
-            y: height * 0.82,
-          },
-
-          // all bubs
-          ...bubsRef.current.map((b) => ({
-            u: b.u,
-            y: b.y,
-          })),
-        ];
-
-        const shuffled = shuffle([...shooters]);
-
-        shuffled.forEach((shooter, i) => {
-          const delay = Math.min(i * RIPPLE_STEP, MAX_RIPPLE_DELAY);
-
-          setTimeout(() => {
-            bullets.current.push({
-              u: Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, shooter.u)),
-              y: shooter.y,
-            });
-          }, delay);
+        fireShots({
+          playerU,
+          playerY: height * 0.82,
+          bubs: bubsRef.current,
+          bullets,
+          ROAD_MARGIN,
         });
 
         lastShot.current = now;
       }
 
-      // move bullets
+      // ----------------------------
+      // BULLET MOVEMENT
+      // ----------------------------
       bullets.current.forEach((b) => {
-        const speed = 4 + (1 - b.y / height) * 2; // slight perspective feel
+        const speed = 4 + (1 - b.y / height) * 2;
         b.y -= speed;
       });
 
-      // spawn enemies
-      const time = Date.now() * 0.001;
-
-      // smooth wave between 0 and 1
-      const raw = (Math.sin(time) + 1) / 2;
-
-      // squash low values → longer quiet periods
-      burstFactor.current = Math.pow(raw, 3);
-
-      // spawn chance
-      const chance =
-        0.001 + // baseline (almost nothing)
-        burstFactor.current * 0.25; // burst intensity - maybe ramp this up as player gets better  - YES DO THIS
-
-      if (Math.random() < chance) {
-        const y = roadTopY;
-
-        const u = ROAD_MARGIN + Math.random() * (1 - ROAD_MARGIN * 2);
-
-        enemies.current.push({ u, y });
-      }
-
-      // move enemies
-      enemies.current.forEach((e) => {
-        const t = (e.y - roadTopY) / (height - roadTopY); // 0 → 1
-        const speed = 0.2 + Math.pow(t, 1.2) * 10;
-        e.y += speed;
-
-        // keep inside inner road
-        e.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, e.u));
+      // ----------------------------
+      // ENEMIES
+      // ----------------------------
+      spawnEnemies({
+        enemies,
+        roadTopY,
+        ROAD_MARGIN,
+        burstFactorRef: burstFactor,
       });
 
-      // move Bubs
-      bubsRef.current.forEach((bub, i) => {
-        const { left, right } = getRoadEdges(PLAYER_Y);
-        const playerU = (PLAYER_X.current - left) / (right - left);
-
-        const roadWidth = right - left;
-        const driftURange = 60 / roadWidth;
-
-        // Occasionally pick a new drift target
-        if (!bub.nextDriftTime || Date.now() > bub.nextDriftTime) {
-          bub.driftX = (Math.random() - 0.5) * 2 * driftURange;
-          bub.driftY = (Math.random() - 0.5) * 80; // ±20px
-
-          bub.nextDriftTime = Date.now() + 300 + Math.random() * 700;
-        }
-
-        // Target position = player + drift
-        const targetU = playerU + bub.driftX;
-        const targetY = PLAYER_Y + bub.driftY;
-
-        const jitter = (Math.random() - 0.5) * 0.01;
-        bub.u += jitter;
-
-        // Smooth follow (rubber band)
-        bub.u += (targetU - bub.u) * 0.05;
-        bub.y += (targetY - bub.y) * 0.05;
-
-        // Clamp to road
-        bub.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, bub.u));
+      updateEnemies({
+        enemies,
+        roadTopY,
+        height,
+        ROAD_MARGIN,
       });
 
-      // spawn gates
-      if (now > nextGateTime.current) {
-        const y = roadTopY + 200;
-
-        const pool = GATE_POOLS[Math.floor(Math.random() * GATE_POOLS.length)];
-
-        gates.current.push({
-          y,
-          left: { ...pool[0], u: 0.3, passed: false },
-          right: { ...pool[1], u: 0.7, passed: false },
-        });
-
-        // schedule next spawn
-        nextGateTime.current = now + getRandomGateDelay();
-      }
-
-      // move gates
-      gates.current.forEach((g) => {
-        const t = (g.y - roadTopY) / (height - roadTopY);
-
-        const speed = (1 + Math.pow(t, 2.5) * 7) * 2; // 👈 double enemy speed
-
-        g.y += speed;
+      // ----------------------------
+      // BUBS
+      // ----------------------------
+      updateBubs({
+        bubs: bubsRef,
+        playerX: PLAYER_X.current,
+        playerY: PLAYER_Y,
+        getRoadEdges,
+        ROAD_MARGIN,
       });
 
+      // ----------------------------
+      // GATES
+      // ----------------------------
+      spawnGates({
+        gates,
+        now,
+        nextGateTimeRef: nextGateTime,
+        getRandomGateDelay,
+        roadTopY,
+        GATE_POOLS,
+      });
+
+      updateGates({ gates, roadTopY, height });
+
+      handleGateEffects({
+        gates,
+        PLAYER_X,
+        PLAYER_Y,
+        getRoadEdges,
+        GATE_HIT_X_PX,
+        GATE_HIT_Y_PX,
+        applyGate,
+      });
+
+      cleanupGates({ gates, height });
+
+      // ----------------------------
       // COLLISIONS
-      const newBullets = [];
-      const newEnemies = [];
-      const PLAYER_HIT_RADIUS = 14;
-      const BUB_HIT_RADIUS = 10;
-
-      let scoreGain = 0;
-
-      enemies.current.forEach((enemy) => {
-        let hit = false;
-
-        bullets.current.forEach((bullet) => {
-          const du = Math.abs(bullet.u - enemy.u);
-          const dy = Math.abs(bullet.y - enemy.y);
-
-          const scale = 0.3 + (enemy.y / height) * 1.5;
-          const dynamicHitY = 8 + scale * 6;
-
-          if (du < HIT_U && dy < dynamicHitY && !hit) {
-            hit = true;
-            scoreGain += 1;
-          }
-        });
-
-        if (!hit) newEnemies.push(enemy);
+      // ----------------------------
+      handleCollisions({
+        enemies,
+        bullets,
+        bubs: bubsRef,
+        getRoadEdges,
+        PLAYER_X,
+        PLAYER_Y,
+        height,
+        setLife,
+        setGameOver,
+        setScore,
       });
 
-      bullets.current.forEach((bullet) => {
-        const hit = enemies.current.some((enemy) => {
-          const du = Math.abs(bullet.u - enemy.u);
-          const dy = Math.abs(bullet.y - enemy.y);
-          return du < HIT_U && dy < HIT_Y;
-        });
-
-        if (!hit) newBullets.push(bullet);
-      });
-
-      // apply updates
-      enemies.current = newEnemies;
-      bullets.current = newBullets;
-      // COLLISIONS
-
-      // GATE Effects
-      gates.current.forEach((g) => {
-        [g.left, g.right].forEach((gate) => {
-          if (gate.passed) return;
-
-          const { left, right } = getRoadEdges(g.y);
-          const gateX = left + gate.u * (right - left);
-
-          const dx = Math.abs(PLAYER_X.current - gateX);
-          const dy = Math.abs(PLAYER_Y - g.y);
-
-          if (dx < GATE_HIT_X_PX && dy < GATE_HIT_Y_PX) {
-            applyGate(gate);
-            gate.passed = true;
-          }
-        });
-      });
-      // GATE Effects
-
-      // SCORE
-      if (scoreGain > 0) {
-        setScore((s) => s + scoreGain);
-      }
-
+      // ----------------------------
       // CLEANUP
+      // ----------------------------
       bullets.current = bullets.current.filter((b) => b.y > roadTopY);
-      gates.current = gates.current.filter((g) => g.y < height);
 
-      // Enemy collisions against Player and Bubs - losing life for each, plus removing colliding Bub
-      // GAME OVER CHECK
-      const survivors = [];
-      let lifeLoss = 0;
-
-      enemies.current.forEach((enemy) => {
-        let hit = false;
-
-        const { left, right } = getRoadEdges(enemy.y);
-        const enemyX = left + enemy.u * (right - left);
-
-        // 🔴 Check PLAYER collision
-        const dxPlayer = Math.abs(enemyX - PLAYER_X.current);
-        const dyPlayer = Math.abs(enemy.y - PLAYER_Y);
-
-        if (dxPlayer < PLAYER_HIT_RADIUS && dyPlayer < PLAYER_HIT_RADIUS) {
-          lifeLoss++;
-          hit = true;
-        }
-
-        // 🔵 Check BUB collisions (only if not already hit player)
-        if (!hit) {
-          for (let i = 0; i < bubsRef.current.length; i++) {
-            const bub = bubsRef.current[i];
-
-            const { left, right } = getRoadEdges(bub.y);
-            const bubX = left + bub.u * (right - left);
-
-            const dx = Math.abs(enemyX - bubX);
-            const dy = Math.abs(enemy.y - bub.y);
-
-            if (dx < BUB_HIT_RADIUS && dy < BUB_HIT_RADIUS) {
-              // remove THIS bub
-              bubsRef.current.splice(i, 1);
-
-              lifeLoss++;
-              hit = true;
-              break;
-            }
-          }
-        }
-
-        if (!hit) {
-          survivors.push(enemy);
-        }
-      });
-
-      enemies.current = survivors;
-
-      const stillAlive = [];
-
-      enemies.current.forEach((e) => {
-        if (e.y >= height) {
-          lifeLoss++; // 👈 lose life when enemy escapes
-        } else {
-          stillAlive.push(e);
-        }
-      });
-
-      enemies.current = stillAlive;
-
-      // apply life loss
-      if (lifeLoss > 0) {
-        setLife((prev) => {
-          const newLife = Math.max(0, prev - lifeLoss);
-
-          if (newLife <= 0) {
-            setGameOver(true);
-            bubsRef.current = [];
-          }
-
-          return newLife;
-        });
-      }
-      // GAME OVER CHECK
-      // Enemy collisions against Player and Bubs - losing life for each, plus removing colliding Bub
-
-      // trigger redraw
+      // ----------------------------
+      // RENDER TICK
+      // ----------------------------
       setTick((t) => t + 1);
-    }, 16); // ~60fps
+    }, 16);
 
     return () => clearInterval(interval);
   }, []);
 
-  // 🎮 TOUCH
+  // ======================================================
+  // INPUT (TOUCH CONTROLS)
+  // ======================================================
   let lastX = 0;
 
   const panResponder = useRef(
@@ -488,20 +302,18 @@ export default function Game() {
 
       onPanResponderGrant: () => {
         if (gameOverRef.current) {
-          // RESET GAME
           enemies.current = [];
           bullets.current = [];
           gates.current = [];
+          bubsRef.current = [];
 
           setLife(100);
           setScore(0);
           setFireRate(500);
           setGameOver(false);
-
           return;
         }
 
-        // normal gameplay
         isFiring.current = true;
         lastX = 0;
       },
@@ -510,14 +322,9 @@ export default function Game() {
         const delta = g.dx - lastX;
         lastX = g.dx;
 
-        PLAYER_X.current += delta * 1.4; // higher = more sensitivity
+        PLAYER_X.current += delta * 1.4;
 
-        // clamp to screen
-        //PLAYER_X.current = Math.max(20, Math.min(width - 20, PLAYER_X.current));
-
-        // clamp to road - not sure if I like this or not
         const { left, right } = getRoadEdges(PLAYER_Y);
-
         PLAYER_X.current = Math.max(
           left + 10,
           Math.min(right - 10, PLAYER_X.current),
@@ -530,39 +337,58 @@ export default function Game() {
     }),
   ).current;
 
+  // ======================================================
+  // RENDER
+  // ======================================================
   return (
     <View style={{ flex: 1 }} {...panResponder.panHandlers}>
-      <View
-        style={{
-          position: "absolute",
-          top: 60,
-          left: 20,
-          zIndex: 10,
-        }}
-      >
+      <View style={{ position: "absolute", top: 60, left: 20, zIndex: 10 }}>
         <Text style={{ color: "black", fontSize: 20 }}>Score: {score}</Text>
       </View>
 
       <Canvas style={{ flex: 1 }}>
+        {/* Background */}
         <Rect x={0} y={0} width={width} height={height}>
-          <LinearGradient
-            start={vec(0, 0)}
-            end={vec(0, height)}
-            colors={["#87CEEB", "#B0E0E6", "#E6F7FF"]}
-          />
-          <>
-            {/* Cloud 1 */}
-            <Circle cx={width * 0.2} cy={height * 0.15} r={20} color="white" />
-            <Circle cx={width * 0.25} cy={height * 0.15} r={25} color="white" />
-            <Circle cx={width * 0.3} cy={height * 0.15} r={20} color="white" />
+          <Rect x={0} y={0} width={width} height={height}>
+            <LinearGradient
+              start={vec(0, 0)}
+              end={vec(0, height)}
+              colors={["#87CEEB", "#B0E0E6", "#E6F7FF"]}
+            />
 
-            {/* Cloud 2 */}
-            <Circle cx={width * 0.7} cy={height * 0.1} r={18} color="white" />
-            <Circle cx={width * 0.75} cy={height * 0.1} r={22} color="white" />
-          </>
+            {/* Clouds */}
+            <>
+              <Circle
+                cx={width * 0.2}
+                cy={height * 0.15}
+                r={20}
+                color="white"
+              />
+              <Circle
+                cx={width * 0.25}
+                cy={height * 0.15}
+                r={25}
+                color="white"
+              />
+              <Circle
+                cx={width * 0.3}
+                cy={height * 0.15}
+                r={20}
+                color="white"
+              />
+
+              <Circle cx={width * 0.7} cy={height * 0.1} r={18} color="white" />
+              <Circle
+                cx={width * 0.75}
+                cy={height * 0.1}
+                r={22}
+                color="white"
+              />
+            </>
+          </Rect>
         </Rect>
 
-        {/* ROAD (trapezoid) */}
+        {/* Road */}
         <Path
           path={`M ${roadBottomLeft} ${height}
                 L ${roadBottomRight} ${height}
@@ -572,6 +398,7 @@ export default function Game() {
           color="#222"
         />
 
+        {/* Life */}
         {font && (
           <SkiaText
             x={width / 2 - font.getTextWidth(`LIFE: ${life}`) / 2}
@@ -586,7 +413,6 @@ export default function Game() {
         {bubsRef.current.map((b, i) => {
           const { left, right } = getRoadEdges(b.y);
           const x = left + b.u * (right - left);
-
           return <Circle key={i} cx={x} cy={b.y} r={8} color="#00ffcc" />;
         })}
 
@@ -597,7 +423,7 @@ export default function Game() {
         {bullets.current.map((b, i) => {
           const { left, right } = getRoadEdges(b.y);
           const x = left + b.u * (right - left);
-          const t = (b.y - roadTopY) / (height - roadTopY); // 0 (top) → 1 (bottom)
+          const t = (b.y - roadTopY) / (height - roadTopY);
           const scale = 0.4 + t * 0.6;
 
           return (
@@ -605,7 +431,7 @@ export default function Game() {
           );
         })}
 
-        {/* Enemies with perspective */}
+        {/* Enemies */}
         {enemies.current.map((e, i) => {
           const { left, right } = getRoadEdges(e.y);
           const x = left + e.u * (right - left);
@@ -618,26 +444,15 @@ export default function Game() {
         {gates.current.map((g, i) => {
           const renderGate = (gate, key) => {
             const { left, right } = getRoadEdges(g.y);
-
             const x = left + gate.u * (right - left);
-
-            const opacity = gate.passed ? 0.3 : 1;
 
             if (!font) return null;
 
             const label = getGateLabel(gate);
+            const scale = 0.4 + ((g.y - roadTopY) / (height - roadTopY)) * 1.2;
 
-            // perspective scale
-            const baseWidth = 80;
-            const baseHeight = 60;
-
-            const t = (g.y - roadTopY) / (height - roadTopY); // 0 → 1
-            const scale = 0.4 + t * 1.2; // tweakable
-
-            const widthPx = baseWidth * scale;
-            const heightPx = baseHeight * scale;
-
-            // font centering
+            const widthPx = 80 * scale;
+            const heightPx = 60 * scale;
             const textWidth = font.getTextWidth(label);
 
             return (
@@ -647,7 +462,7 @@ export default function Game() {
                 y={g.y - heightPx}
                 width={widthPx}
                 height={heightPx}
-                opacity={opacity}
+                opacity={gate.passed ? 0.3 : 1}
               >
                 <LinearGradient
                   start={vec(0, g.y)}
@@ -658,13 +473,12 @@ export default function Game() {
                       : ["rgba(0,255,0,0.5)", "rgba(0,255,0,0.0)"]
                   }
                 />
-
                 <SkiaText
                   x={x - textWidth / 2}
                   y={g.y - heightPx / 2}
                   text={label}
                   font={font}
-                  color={gate.passed ? "rgba(200,200,200,0.6)" : "white"}
+                  color="white"
                 />
               </Rect>
             );
@@ -678,20 +492,17 @@ export default function Game() {
           );
         })}
 
+        {/* Fog Overlay */}
         <Rect x={0} y={roadTopY - 10} width={width} height={height}>
           <LinearGradient
             start={vec(0, roadTopY)}
             end={vec(0, height)}
-            colors={[
-              "rgba(255,255,255,0.4)", // clear near top
-              "rgba(255,255,255,0.0)", // fog near player
-            ]}
+            colors={["rgba(255,255,255,0.4)", "rgba(255,255,255,0.0)"]}
           />
         </Rect>
 
         {gameOver && font && (
           <>
-            {/* Background Box */}
             <Rect
               x={width / 2 - (width * 0.7) / 2}
               y={height / 2 - 70}
@@ -701,7 +512,6 @@ export default function Game() {
               color="rgba(0,0,0,0.6)"
             />
 
-            {/* GAME OVER */}
             <SkiaText
               x={width / 2 - font.getTextWidth("GAME OVER") / 2}
               y={height / 2 - 10}
@@ -710,7 +520,6 @@ export default function Game() {
               color="red"
             />
 
-            {/* Restart */}
             <SkiaText
               x={width / 2 - font.getTextWidth("Tap to restart") / 2}
               y={height / 2 + 30}
