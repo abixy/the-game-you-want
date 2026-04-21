@@ -175,11 +175,14 @@ export default function Game() {
   // ======================================================
   useEffect(() => {
     nextGateTime.current = Date.now() + getRandomGateDelay();
+    let lastTime = Date.now();
 
     const interval = setInterval(() => {
       if (gameOverRef.current) return;
 
       const now = Date.now();
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
 
       // ----------------------------
       // SHOOTING
@@ -200,11 +203,24 @@ export default function Game() {
       }
 
       // ----------------------------
-      // BULLET MOVEMENT
+      // BULLET MOVEMENT + CLEANUP
       // ----------------------------
-      bullets.current.forEach((b) => {
-        const speed = 4 + (1 - b.y / height) * 2;
-        b.y -= speed;
+      bullets.current = bullets.current.filter((b) => {
+        const now = Date.now();
+
+        // 🟡 WAIT until it's time to spawn
+        if (now < b.spawnTime) {
+          return true; // keep bullet, but don't move it yet
+        }
+
+        // 🟢 MOVE
+        b.y -= b.speed * dt * 100;
+
+        // 🟢 RANGE CHECK
+        const traveled = b.yStart - b.y;
+        const maxDistance = (height - roadTopY) * b.range;
+
+        return traveled < maxDistance && b.y > roadTopY;
       });
 
       // ----------------------------
@@ -276,11 +292,6 @@ export default function Game() {
         setGameOver,
         setScore,
       });
-
-      // ----------------------------
-      // CLEANUP
-      // ----------------------------
-      bullets.current = bullets.current.filter((b) => b.y > roadTopY);
 
       // ----------------------------
       // RENDER TICK

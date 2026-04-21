@@ -7,11 +7,12 @@ export function spawnBubs({ bubs, count, MAX_BUBS, PLAYER_Y }) {
     if (bubs.current.length >= MAX_BUBS) break;
 
     bubs.current.push({
-      u: 0.5, // start centered
-      y: PLAYER_Y, // start at player depth
-
-      vx: 0, // required for boids system
+      u: 0.5,
+      y: PLAYER_Y,
+      vx: 0,
       vy: 0,
+
+      type: "player", // 👈 default
     });
   }
 }
