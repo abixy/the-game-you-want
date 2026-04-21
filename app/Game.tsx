@@ -17,6 +17,7 @@ const { width, height } = Dimensions.get("window");
 // CONFIG + SYSTEM IMPORTS
 // ======================================================
 import {
+  BULLET_SPEED_SCALE,
   GATE_HIT_X_PX,
   GATE_HIT_Y_PX,
   MAX_BUBS,
@@ -206,15 +207,13 @@ export default function Game() {
       // BULLET MOVEMENT + CLEANUP
       // ----------------------------
       bullets.current = bullets.current.filter((b) => {
-        const now = Date.now();
-
         // 🟡 WAIT until it's time to spawn
         if (now < b.spawnTime) {
           return true; // keep bullet, but don't move it yet
         }
 
         // 🟢 MOVE
-        b.y -= b.speed * dt * 100;
+        b.y -= b.speed * dt * BULLET_SPEED_SCALE;
 
         // 🟢 RANGE CHECK
         const traveled = b.yStart - b.y;
@@ -317,6 +316,8 @@ export default function Game() {
           bullets.current = [];
           gates.current = [];
           bubsRef.current = [];
+          lastShot.current = 0;
+          nextGateTime.current = Date.now() + getRandomGateDelay();
 
           setLife(100);
           setScore(0);
@@ -420,11 +421,36 @@ export default function Game() {
           />
         )}
 
-        {/* Bubs */}
         {bubsRef.current.map((b, i) => {
           const { left, right } = getRoadEdges(b.y);
           const x = left + b.u * (right - left);
-          const pulse = 1 + Math.sin(Date.now() * 0.005 + i) * 0.2;
+
+          const time = tick * 16;
+          const isSniper = b.type === "sniper";
+          const pulse = isSniper
+            ? 1 + Math.sin(time * 0.005 + i) * 0.1
+            : 1 + Math.sin(time * 0.005 + i) * 0.2;
+
+          if (isSniper) {
+            const size = 12 * pulse;
+
+            const path = `
+              M ${x} ${b.y - size} 
+              L ${x - size} ${b.y + size} 
+              L ${x + size} ${b.y + size} 
+              Z
+            `;
+
+            return (
+              <Path
+                key={i}
+                path={path}
+                color="#66ff99" // 👈 light green
+              />
+            );
+          }
+
+          // Default (normal bub)
           return (
             <Circle key={i} cx={x} cy={b.y} r={8 * pulse} color="#00ffcc" />
           );
@@ -435,13 +461,30 @@ export default function Game() {
 
         {/* Bullets */}
         {bullets.current.map((b, i) => {
+          if (Date.now() < b.spawnTime) return null; // 👈 ADD THIS
+
           const { left, right } = getRoadEdges(b.y);
           const x = left + b.u * (right - left);
           const t = (b.y - roadTopY) / (height - roadTopY);
           const scale = 0.4 + t * 0.6;
 
+          const BULLET_COLORS = {
+            normal: "yellow",
+            sniper: "#66ff99",
+            scatter: "#ffcc66",
+          };
+
+          const color = BULLET_COLORS[b.type] || BULLET_COLORS.normal;
+
           return (
-            <Circle key={i} cx={x} cy={b.y} r={4 * scale} color="yellow" />
+            <Circle
+              key={i}
+              cx={x}
+              cy={b.y}
+              r={b.type === "sniper" ? 3 * scale : 4 * scale}
+              opacity={b.type === "sniper" ? 1 : 0.9}
+              color={color}
+            />
           );
         })}
 

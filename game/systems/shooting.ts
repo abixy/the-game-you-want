@@ -13,7 +13,7 @@ const BULLET_TYPES = {
 
   sniper: {
     range: 1.0,
-    speed: 1.6,
+    speed: 2.5,
     pattern: "single",
   },
 
@@ -42,7 +42,6 @@ export function fireShots({ playerU, playerY, bubs, bullets, ROAD_MARGIN }) {
 
     ...bubs.map((b) => ({
       type: b.type || "normal",
-      ref: b,
       u: b.u,
       y: b.y,
     })),
@@ -101,16 +100,6 @@ export function fireShots({ playerU, playerY, bubs, bullets, ROAD_MARGIN }) {
           type: shooter.type,
         });
       }
-    }
-
-    // --------------------------------------------------
-    // 🔥 BUB RECOIL
-    // --------------------------------------------------
-    if (shooter.ref) {
-      const bub = shooter.ref;
-
-      bub.vy -= 0.1;
-      bub.vx += (Math.random() - 0.5) * 0.01;
     }
   });
 }

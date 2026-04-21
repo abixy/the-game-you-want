@@ -12,7 +12,7 @@ export function spawnBubs({ bubs, count, MAX_BUBS, PLAYER_Y }) {
       vx: 0,
       vy: 0,
 
-      type: "player", // 👈 default
+      type: Math.random() < 0.2 ? "sniper" : "normal", // 20% of sniper type
     });
   }
 }
@@ -65,6 +65,13 @@ export function updateBubs({
     // ---------------------------
     if (b.vx === undefined) b.vx = 0;
     if (b.vy === undefined) b.vy = 0;
+
+    // ---------------------------
+    // VARY BUB TYPE MOVEMENT SPEED for balance
+    // ---------------------------
+    if (b.type === "sniper") {
+      b.vx *= 0;
+    }
 
     // ---------------------------
     // SMALL VERTICAL NOISE
