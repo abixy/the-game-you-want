@@ -1,4 +1,4 @@
-export const MAX_BUBS = 5;
+export const MAX_BUBS = 3;
 export const RIPPLE_STEP = 50;
 export const MAX_RIPPLE_DELAY = 200;
 

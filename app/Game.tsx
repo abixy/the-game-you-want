@@ -413,7 +413,10 @@ export default function Game() {
         {bubsRef.current.map((b, i) => {
           const { left, right } = getRoadEdges(b.y);
           const x = left + b.u * (right - left);
-          return <Circle key={i} cx={x} cy={b.y} r={8} color="#00ffcc" />;
+          const pulse = 1 + Math.sin(Date.now() * 0.005 + i) * 0.2;
+          return (
+            <Circle key={i} cx={x} cy={b.y} r={8 * pulse} color="#00ffcc" />
+          );
         })}
 
         {/* Player */}
