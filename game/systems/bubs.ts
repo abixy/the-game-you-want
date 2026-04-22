@@ -9,145 +9,110 @@ export function spawnBubs({ bubs, count, MAX_BUBS, PLAYER_Y }) {
     bubs.current.push({
       u: 0.5,
       y: PLAYER_Y,
-      vx: 0,
-      vy: 0,
-
-      type: Math.random() < 0.2 ? "sniper" : "normal", // 20% of sniper type
+      type: Math.random() < 0.2 ? "sniper" : "normal",
     });
   }
 }
 
 // ======================================================
-// BUB SYSTEM — BOIDS-LITE SWARM
+// BUB SYSTEM — FORMATION + LIGHT WIGGLE
 // ======================================================
 export function updateBubs({
   bubs,
   playerX,
   playerY,
-  getRoadEdges,
-  ROAD_MARGIN,
+  height,
+  projection,
+  worldOffsetX,
 }) {
-  const cohesionStrength = 0.006;
-  const separationStrength = 0.03;
+  // --------------------------------------------------
+  // 🎯 Convert player screen X → U (projection-aware)
+  // --------------------------------------------------
+  const playerU = projection.unprojectU(playerX, playerY, worldOffsetX);
 
-  const maxSpeedU = 0.01; // horizontal (u space)
-  const maxSpeedY = 2; // vertical (pixels)
-  const separationDistance = 0.04; // in U space
+  const safePlayerU = Math.max(0, Math.min(1, playerU));
 
-  // ------------------------------------------------------
-  // STEP 1: Compute center of swarm (cohesion target)
-  // ------------------------------------------------------
-  let centerU = 0;
-  let centerY = 0;
+  const count = bubs.current.length;
 
-  bubs.current.forEach((b) => {
-    centerU += b.u;
-    centerY += b.y;
-  });
+  // --------------------------------------------------
+  // 🧱 Formation sizing
+  // --------------------------------------------------
+  const COLS = Math.min(8, Math.ceil(Math.sqrt(count)));
+  const SPACING_U = 0.06;
+  const SPACING_Y = 18;
 
-  if (bubs.current.length > 0) {
-    centerU /= bubs.current.length;
-    centerY /= bubs.current.length;
-  }
+  const time = Date.now() * 0.002;
 
-  // ------------------------------------------------------
-  // STEP 2: Convert player X → U space
-  // ------------------------------------------------------
-  const { left, right } = getRoadEdges(playerY);
-  const playerU = (playerX - left) / (right - left);
-
-  // ------------------------------------------------------
-  // STEP 3: Apply forces to each bub
-  // ------------------------------------------------------
   bubs.current.forEach((b, i) => {
-    // ---------------------------
-    // INIT VELOCITY (safe)
-    // ---------------------------
-    if (b.vx === undefined) b.vx = 0;
-    if (b.vy === undefined) b.vy = 0;
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
 
-    // ---------------------------
-    // VARY BUB TYPE MOVEMENT SPEED for balance
-    // ---------------------------
-    if (b.type === "sniper") {
-      b.vx *= 0;
+    // --------------------------------------------------
+    // 🎯 Formation positioning (centered behind player)
+    // --------------------------------------------------
+    const formationWidth = (COLS - 1) * SPACING_U;
+    const offsetU = col * SPACING_U - formationWidth / 2;
+
+    const targetU = safePlayerU + offsetU;
+    const targetY = playerY + 20 + row * SPACING_Y;
+
+    // --------------------------------------------------
+    // 🧠 Smooth follow (snipers lag slightly more)
+    // --------------------------------------------------
+    const follow = b.type === "sniper" ? 0.06 : 0.12;
+
+    b.u += (targetU - b.u) * follow;
+    b.y += (targetY - b.y) * follow;
+
+    // --------------------------------------------------
+    // 🌊 Tiny local wiggle (very subtle, non-sinusoidal)
+    // --------------------------------------------------
+    if (!b.wiggle) {
+      b.wiggle = {
+        u: 0,
+        y: 0,
+        targetU: 0,
+        targetY: 0,
+        timer: 0,
+      };
     }
 
-    // ---------------------------
-    // SMALL VERTICAL NOISE
-    // ---------------------------
-    b.vy += (Math.random() - 0.5) * 0.2; // stronger so it's visible
+    b.wiggle.timer -= 1;
 
-    // ---------------------------
-    // COHESION (toward group)
-    // ---------------------------
-    const cohesionU = (centerU - b.u) * cohesionStrength;
-    const cohesionY = (centerY - b.y) * cohesionStrength;
+    if (b.wiggle.timer <= 0) {
+      b.wiggle.timer = 20 + Math.random() * 40;
 
-    // ---------------------------
-    // SEPARATION (avoid overlap)
-    // ---------------------------
-    let sepU = 0;
-    let sepY = 0;
-
-    bubs.current.forEach((other, j) => {
-      if (i === j) return;
-
-      const yScale = 1 / 100; // tweak this
-
-      const du = b.u - other.u;
-      const dy = (b.y - other.y) * yScale;
-
-      const dist = Math.sqrt(du * du + dy * dy);
-
-      if (dist < separationDistance && dist > 0) {
-        sepU += du / dist;
-        sepY += dy / dist;
-      }
-    });
-
-    sepU *= separationStrength;
-    sepY *= separationStrength;
-
-    // ---------------------------
-    // FOLLOW PLAYER (anchor)
-    // ---------------------------
-    const followU = (playerU - b.u) * 0.02; // strong horizontal follow
-    const followY = (playerY - b.y) * 0.005; // weak vertical follow
-
-    // ---------------------------
-    // COMBINE FORCES → velocity
-    // ---------------------------
-    b.vx += cohesionU + sepU + followU;
-    b.vy += cohesionY + sepY + followY;
-
-    // ---------------------------
-    // VERTICAL BAND CONSTRAINT
-    // keeps bubs within a soft range around player
-    // ---------------------------
-    const dy = b.y - playerY;
-
-    if (dy > 16) {
-      b.vy -= (dy - 16) * 0.02;
-    } else if (dy < -16) {
-      b.vy -= (dy + 16) * 0.02;
+      b.wiggle.targetU = (Math.random() - 0.5) * 0.01;
+      b.wiggle.targetY = (Math.random() - 0.5) * 2;
     }
 
-    // ---------------------------
-    // LIMIT SPEED (separate axes)
-    // ---------------------------
-    b.vx = Math.max(-maxSpeedU, Math.min(maxSpeedU, b.vx));
-    b.vy = Math.max(-maxSpeedY, Math.min(maxSpeedY, b.vy));
+    b.wiggle.u += (b.wiggle.targetU - b.wiggle.u) * 0.1;
+    b.wiggle.y += (b.wiggle.targetY - b.wiggle.y) * 0.1;
 
-    // ---------------------------
-    // APPLY MOVEMENT
-    // ---------------------------
-    b.u += b.vx;
-    b.y += b.vy;
+    b.u += b.wiggle.u;
+    b.y += b.wiggle.y;
 
-    // ---------------------------
-    // CLAMP TO ROAD
-    // ---------------------------
-    b.u = Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, b.u));
+    // --------------------------------------------------
+    // 🎯 Clamp to road (projection-aware)
+    // --------------------------------------------------
+    const leftEdge = projection.projectX(0, b.y, worldOffsetX);
+    const rightEdge = projection.projectX(1, b.y, worldOffsetX);
+
+    const x = projection.projectX(b.u, b.y, worldOffsetX);
+
+    const BUB_MARGIN = 12;
+
+    const clampedX = Math.max(
+      leftEdge + BUB_MARGIN,
+      Math.min(rightEdge - BUB_MARGIN, x),
+    );
+
+    // convert back to U using projection helper
+    b.u = projection.unprojectU(clampedX, b.y, worldOffsetX);
+
+    // --------------------------------------------------
+    // Keep on screen vertically
+    // --------------------------------------------------
+    b.y = Math.min(height - 20, b.y);
   });
 }

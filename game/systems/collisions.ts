@@ -11,18 +11,19 @@ export function handleCollisions({
   enemies,
   bullets,
   bubs,
-  getRoadEdges,
   PLAYER_X,
   PLAYER_Y,
   height,
   setLife,
   setGameOver,
   setScore,
+  projection,
+  worldOffsetX,
 }) {
   // ------------------------------------------------------
   // TUNABLE CONSTANTS (collision feel)
   // ------------------------------------------------------
-  const HIT_U = 0.04; // horizontal hit tolerance (normalized)
+  const HIT_X = 12;
   const HIT_Y = 12; // vertical hit tolerance (pixels)
 
   const PLAYER_HIT_RADIUS = 14;
@@ -45,11 +46,13 @@ export function handleCollisions({
     let hit = false;
 
     bullets.current.forEach((bullet) => {
-      const du = Math.abs(bullet.u - enemy.u);
+      const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
+      const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
+
+      const dx = Math.abs(bulletX - enemyX);
       const dy = Math.abs(bullet.y - enemy.y);
 
-      // NOTE: single-hit per enemy (prevents multi-bullet stacking)
-      if (du < HIT_U && dy < HIT_Y && !hit) {
+      if (dx < HIT_X && dy < HIT_Y && !hit) {
         hit = true;
         scoreGain++;
       }
@@ -63,9 +66,13 @@ export function handleCollisions({
   // ------------------------------------------------------
   bullets.current.forEach((bullet) => {
     const hit = enemies.current.some((enemy) => {
-      const du = Math.abs(bullet.u - enemy.u);
+      const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
+      const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
+
+      const dx = Math.abs(bulletX - enemyX);
       const dy = Math.abs(bullet.y - enemy.y);
-      return du < HIT_U && dy < HIT_Y;
+
+      return dx < HIT_X && dy < HIT_Y;
     });
 
     if (!hit) remainingBullets.push(bullet);
@@ -85,8 +92,7 @@ export function handleCollisions({
     let hit = false;
 
     // Convert enemy u → screen x
-    const { left, right } = getRoadEdges(enemy.y);
-    const enemyX = left + enemy.u * (right - left);
+    const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
 
     // -------------------------
     // PLAYER COLLISION
@@ -106,8 +112,7 @@ export function handleCollisions({
       for (let i = 0; i < bubs.current.length; i++) {
         const bub = bubs.current[i];
 
-        const { left, right } = getRoadEdges(bub.y);
-        const bubX = left + bub.u * (right - left);
+        const bubX = projection.projectX(bub.u, bub.y, worldOffsetX);
 
         if (
           Math.abs(enemyX - bubX) < BUB_HIT_RADIUS &&

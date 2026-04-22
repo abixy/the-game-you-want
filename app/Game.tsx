@@ -33,8 +33,7 @@ import {
   updateGates,
 } from "../game/systems/gates";
 import { fireShots } from "../game/systems/shooting";
-
-import { createRoad } from "../game/utils/road";
+import { createProjection } from "../game/utils/projection";
 
 // ======================================================
 // MAIN COMPONENT
@@ -65,9 +64,16 @@ export default function Game() {
   const ROAD_MARGIN = 0.12;
   const roadTopY = height * 0.2;
 
-  const getRoadEdges = createRoad({
-    roadTopY,
+  // ======================================================
+  // PROJECTION for ROAD counter-swiping
+  // ======================================================
+  const worldOffsetX = useRef(0);
+
+  const projection = createProjection({
+    width,
     height,
+    roadTopY,
+    cameraScale: 1.25,
     roadTopLeft,
     roadTopRight,
     roadBottomLeft,
@@ -117,19 +123,19 @@ export default function Game() {
 
   const GATE_POOLS = [
     [
-      { type: "bub", value: 1 },
+      { type: "bub", value: 5 },
       { type: "life", value: 10 },
     ],
     [
       { type: "life", value: 30 },
-      { type: "bub", value: 2 },
+      { type: "bub", value: 5 },
     ],
     [
-      { type: "bub", value: 1 },
+      { type: "bub", value: 5 },
       { type: "life", value: 15 },
     ],
     [
-      { type: "fastFire", value: 1 },
+      { type: "bub", value: 5 },
       { type: "life", value: 15 },
     ],
   ];
@@ -189,11 +195,18 @@ export default function Game() {
       // SHOOTING
       // ----------------------------
       if (isFiring.current && now - lastShot.current > fireRateRef.current) {
-        const { left, right } = getRoadEdges(height * 0.82);
-        const playerU = (PLAYER_X.current - left) / (right - left);
+        // --------------------------------------------------
+        // 🎯 Convert PLAYER_X → U using projection
+        // --------------------------------------------------
+        const playerU = projection.unprojectU(
+          PLAYER_X.current,
+          height * 0.82,
+          worldOffsetX.current,
+        );
+        const safeU = Math.max(0, Math.min(1, playerU));
 
         fireShots({
-          playerU,
+          playerU: safeU,
           playerY: height * 0.82,
           bubs: bubsRef.current,
           bullets,
@@ -246,8 +259,9 @@ export default function Game() {
         bubs: bubsRef,
         playerX: PLAYER_X.current,
         playerY: PLAYER_Y,
-        getRoadEdges,
-        ROAD_MARGIN,
+        projection,
+        worldOffsetX: worldOffsetX.current,
+        height,
       });
 
       // ----------------------------
@@ -268,10 +282,11 @@ export default function Game() {
         gates,
         PLAYER_X,
         PLAYER_Y,
-        getRoadEdges,
         GATE_HIT_X_PX,
         GATE_HIT_Y_PX,
         applyGate,
+        projection,
+        worldOffsetX: worldOffsetX.current,
       });
 
       cleanupGates({ gates, height });
@@ -283,14 +298,24 @@ export default function Game() {
         enemies,
         bullets,
         bubs: bubsRef,
-        getRoadEdges,
         PLAYER_X,
         PLAYER_Y,
         height,
         setLife,
         setGameOver,
         setScore,
+        projection,
+        worldOffsetX: worldOffsetX.current,
       });
+
+      // --------------------------------------------------
+      // 🎯 AUTO-CENTER WORLD (better feel)
+      // --------------------------------------------------
+      if (!isFiring.current) {
+        const RETURN_SPEED = 0.05;
+
+        worldOffsetX.current += (0 - worldOffsetX.current) * RETURN_SPEED;
+      }
 
       // ----------------------------
       // RENDER TICK
@@ -334,12 +359,48 @@ export default function Game() {
         const delta = g.dx - lastX;
         lastX = g.dx;
 
+        // existing player movement (keep it for now)
         PLAYER_X.current += delta * 1.4;
 
-        const { left, right } = getRoadEdges(PLAYER_Y);
+        // --------------------------------------------------
+        // 🎯 PLAYER CLAMP (projection-aware)
+        // Clamp player to visible road edges
+        // --------------------------------------------------
+        const leftEdge = projection.projectX(0, PLAYER_Y, worldOffsetX.current);
+        const rightEdge = projection.projectX(
+          1,
+          PLAYER_Y,
+          worldOffsetX.current,
+        );
+
+        const PLAYER_MARGIN = 12; // visual padding
+
         PLAYER_X.current = Math.max(
-          left + 10,
-          Math.min(right - 10, PLAYER_X.current),
+          leftEdge + PLAYER_MARGIN,
+          Math.min(rightEdge - PLAYER_MARGIN, PLAYER_X.current),
+        );
+
+        // --------------------------------------------------
+        // 🌍 WORLD SHIFT (camera movement)
+        // Move world opposite of finger drag
+        // --------------------------------------------------
+        worldOffsetX.current -= delta * 0.6;
+
+        // --------------------------------------------------
+        // 🧍 PLAYER ANCHORING
+        // Pull player slightly with the world
+        // Prevents "sliding on glass" feeling
+        // --------------------------------------------------
+        const PLAYER_WORLD_COUPLING = 0.25; // tweak 0.1–0.4
+
+        PLAYER_X.current += delta * 0.6 * PLAYER_WORLD_COUPLING;
+
+        // --------------------------------------------------
+        // 🚧 CLAMP WORLD OFFSET
+        // Prevent road from sliding off-screen
+        // --------------------------------------------------
+        worldOffsetX.current = projection.clampWorldOffset(
+          worldOffsetX.current,
         );
       },
 
@@ -402,11 +463,13 @@ export default function Game() {
 
         {/* Road */}
         <Path
-          path={`M ${roadBottomLeft} ${height}
-                L ${roadBottomRight} ${height}
-                L ${roadTopRight} ${roadTopY}
-                L ${roadTopLeft} ${roadTopY}
-                Z`}
+          path={projection.getRoadPath({
+            roadBottomLeft,
+            roadBottomRight,
+            roadTopLeft,
+            roadTopRight,
+            worldOffsetX: worldOffsetX.current,
+          })}
           color="#222"
         />
 
@@ -420,10 +483,8 @@ export default function Game() {
             color="black"
           />
         )}
-
         {bubsRef.current.map((b, i) => {
-          const { left, right } = getRoadEdges(b.y);
-          const x = left + b.u * (right - left);
+          const x = projection.projectX(b.u, b.y, worldOffsetX.current);
 
           const time = tick * 16;
           const isSniper = b.type === "sniper";
@@ -461,10 +522,10 @@ export default function Game() {
 
         {/* Bullets */}
         {bullets.current.map((b, i) => {
-          if (Date.now() < b.spawnTime) return null; // 👈 ADD THIS
+          if (Date.now() < b.spawnTime) return null;
 
-          const { left, right } = getRoadEdges(b.y);
-          const x = left + b.u * (right - left);
+          const x = projection.projectX(b.u, b.y, worldOffsetX.current);
+
           const t = (b.y - roadTopY) / (height - roadTopY);
           const scale = 0.4 + t * 0.6;
 
@@ -490,8 +551,7 @@ export default function Game() {
 
         {/* Enemies */}
         {enemies.current.map((e, i) => {
-          const { left, right } = getRoadEdges(e.y);
-          const x = left + e.u * (right - left);
+          const x = projection.projectX(e.u, e.y, worldOffsetX.current);
           const scale = 0.3 + (e.y / height) * 1.5;
 
           return <Circle key={i} cx={x} cy={e.y} r={8 * scale} color="red" />;
@@ -500,8 +560,7 @@ export default function Game() {
         {/* Gates */}
         {gates.current.map((g, i) => {
           const renderGate = (gate, key) => {
-            const { left, right } = getRoadEdges(g.y);
-            const x = left + gate.u * (right - left);
+            const x = projection.projectX(gate.u, g.y, worldOffsetX.current);
 
             if (!font) return null;
 

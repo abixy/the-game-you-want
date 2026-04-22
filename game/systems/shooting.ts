@@ -29,7 +29,7 @@ const BULLET_TYPES = {
 // ======================================================
 // MAIN SHOOT FUNCTION
 // ======================================================
-export function fireShots({ playerU, playerY, bubs, bullets, ROAD_MARGIN }) {
+export function fireShots({ playerU, playerY, bubs, bullets }) {
   // --------------------------------------------------
   // STEP 1: Build shooter list
   // --------------------------------------------------
@@ -58,7 +58,13 @@ export function fireShots({ playerU, playerY, bubs, bullets, ROAD_MARGIN }) {
   shuffled.forEach((shooter, i) => {
     const delay = Math.min(i * RIPPLE_STEP, MAX_RIPPLE_DELAY);
 
-    const clampU = (u) => Math.max(ROAD_MARGIN, Math.min(1 - ROAD_MARGIN, u));
+    // --------------------------------------------------
+    // 🎯 BULLET CLAMP (very light, prevents edge glitches)
+    // --------------------------------------------------
+    const BULLET_MARGIN = 0.01;
+
+    const clampU = (u) =>
+      Math.max(BULLET_MARGIN, Math.min(1 - BULLET_MARGIN, u));
 
     const config = BULLET_TYPES[shooter.type] || BULLET_TYPES.normal;
 

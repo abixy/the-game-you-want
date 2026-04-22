@@ -1,5 +1,5 @@
-export const MAX_BUBS = 3;
-export const BULLET_SPEED_SCALE = 100;
+export const MAX_BUBS = 20;
+export const BULLET_SPEED_SCALE = 200;
 export const RIPPLE_STEP = 50;
 export const MAX_RIPPLE_DELAY = 200;
 

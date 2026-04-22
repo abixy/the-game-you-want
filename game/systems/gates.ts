@@ -75,38 +75,40 @@ export function updateGates({ gates, roadTopY, height }) {
 }
 
 // ======================================================
-// 🎯 HANDLE GATE EFFECTS
-// Detects player passing through a gate and applies effect
+// 🎯 HANDLE GATE EFFECTS (projection-aware)
 // ======================================================
 export function handleGateEffects({
   gates,
   PLAYER_X,
   PLAYER_Y,
-  getRoadEdges,
   GATE_HIT_X_PX,
   GATE_HIT_Y_PX,
   applyGate,
+  projection,
+  worldOffsetX,
 }) {
   gates.current.forEach((g) => {
     [g.left, g.right].forEach((gate) => {
       // 🚫 Skip if already used
       if (gate.passed) return;
 
-      // 📐 Convert gate "u" → actual screen X
-      const { left, right } = getRoadEdges(g.y);
-      const gateX = left + gate.u * (right - left);
+      // --------------------------------------------------
+      // 🎯 Project gate position into screen space
+      // --------------------------------------------------
+      const gateX = projection.projectX(gate.u, g.y, worldOffsetX);
 
-      // 📏 Distance from player
+      // --------------------------------------------------
+      // 📏 Distance from player (screen space)
+      // --------------------------------------------------
       const dx = Math.abs(PLAYER_X.current - gateX);
       const dy = Math.abs(PLAYER_Y - g.y);
 
-      // 🎯 Collision check (player must actually touch gate)
+      // --------------------------------------------------
+      // 🎯 Collision check
+      // --------------------------------------------------
       if (dx < GATE_HIT_X_PX && dy < GATE_HIT_Y_PX) {
-        applyGate(gate); // ✨ apply effect
-        gate.passed = true; // 🔒 prevent double trigger
-
-        // 🐛 DEBUG
-        // console.log("Gate triggered:", gate.type);
+        applyGate(gate);
+        gate.passed = true;
       }
     });
   });
