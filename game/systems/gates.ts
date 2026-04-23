@@ -8,6 +8,33 @@
 // ======================================================
 
 // ======================================================
+// ⚖️ GATE POWER MAPPING
+// Converts gate effects → abstract "power" value
+// This will later drive difficulty balancing
+// ======================================================
+function getGatePower(gate) {
+  if (gate.type === "bub") {
+    // each bub ≈ small sustained DPS increase
+    return gate.value * 2;
+  }
+
+  if (gate.type === "life") {
+    // life = survivability (lower weight than offense)
+    return gate.value * 0.5;
+  }
+
+  if (gate.type === "fastFire") {
+    return 15;
+  }
+
+  if (gate.type === "slowFire") {
+    return -10;
+  }
+
+  return 0;
+}
+
+// ======================================================
 // 🧬 SPAWN GATES
 // Creates a pair of gates (left + right) at intervals
 // ======================================================
@@ -23,28 +50,42 @@ export function spawnGates({
   if (now < nextGateTimeRef.current) return;
 
   // 📍 Spawn slightly below top of road (feels better visually)
-  const y = roadTopY + 200;
+  const y = roadTopY;
 
   // 🎲 Pick a random gate pair from pool
   const pool = GATE_POOLS[Math.floor(Math.random() * GATE_POOLS.length)];
 
-  // 🧱 Create gate pair (left + right)
+  // 🧱 Create variable-width gate set (1–3 lanes)
+  const laneCount = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
+
+  const gatesForRow = [];
+
+  for (let i = 0; i < laneCount; i++) {
+    const laneU = (i + 0.5) / 3; // thirds: 0.166, 0.5, 0.833
+
+    const base = pool[i % pool.length];
+
+    const magnitude = base.value || 10;
+
+    gatesForRow.push({
+      ...base,
+      u: laneU,
+      passed: false,
+
+      // --------------------------------------
+      // NEW: health/value system
+      // --------------------------------------
+      health: Math.abs(magnitude),
+      maxHealth: Math.abs(magnitude),
+
+      // starts negative (danger)
+      value: -Math.abs(magnitude),
+    });
+  }
+
   gates.current.push({
     y,
-
-    // 🚪 Left gate
-    left: {
-      ...pool[0],
-      u: 0.3, // horizontal position (0–1 across road)
-      passed: false,
-    },
-
-    // 🚪 Right gate
-    right: {
-      ...pool[1],
-      u: 0.7,
-      passed: false,
-    },
+    items: gatesForRow,
   });
 
   // 🔁 Schedule next spawn
@@ -60,7 +101,9 @@ export function spawnGates({
 // ======================================================
 export function updateGates({ gates, roadTopY, height }) {
   gates.current.forEach((g) => {
-    // 🧭 Perspective factor (0 = top, 1 = bottom)
+    // --------------------------------------
+    // 🚗 Move gate row down the road
+    // --------------------------------------
     const t = (g.y - roadTopY) / (height - roadTopY);
 
     // ⚡ Speed increases as gate approaches player
@@ -69,8 +112,25 @@ export function updateGates({ gates, roadTopY, height }) {
     // - multiplier (7) → intensity
     const speed = (1 + Math.pow(t, 2.5) * 7) * 2;
 
-    // ⬇️ Apply movement
     g.y += speed;
+
+    // --------------------------------------
+    // ✨ Per-gate updates (flash decay, etc.)
+    // --------------------------------------
+    if (!g.items) return;
+
+    g.items.forEach((gate) => {
+      // ----------------------------
+      // Fade hit flash over time
+      // ----------------------------
+      if (gate.flash) {
+        gate.flash *= 0.85;
+
+        if (gate.flash < 0.05) {
+          gate.flash = 0;
+        }
+      }
+    });
   });
 }
 
@@ -88,24 +148,14 @@ export function handleGateEffects({
   worldOffsetX,
 }) {
   gates.current.forEach((g) => {
-    [g.left, g.right].forEach((gate) => {
-      // 🚫 Skip if already used
+    g.items.forEach((gate) => {
       if (gate.passed) return;
 
-      // --------------------------------------------------
-      // 🎯 Project gate position into screen space
-      // --------------------------------------------------
       const gateX = projection.projectX(gate.u, g.y, worldOffsetX);
 
-      // --------------------------------------------------
-      // 📏 Distance from player (screen space)
-      // --------------------------------------------------
       const dx = Math.abs(PLAYER_X.current - gateX);
       const dy = Math.abs(PLAYER_Y - g.y);
 
-      // --------------------------------------------------
-      // 🎯 Collision check
-      // --------------------------------------------------
       if (dx < GATE_HIT_X_PX && dy < GATE_HIT_Y_PX) {
         applyGate(gate);
         gate.passed = true;

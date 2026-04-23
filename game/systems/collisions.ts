@@ -11,6 +11,7 @@ export function handleCollisions({
   enemies,
   bullets,
   bubs,
+  gates,
   PLAYER_X,
   PLAYER_Y,
   height,
@@ -101,13 +102,57 @@ export function handleCollisions({
           break; // enemy is dead, stop checking bullets
         }
         /// DEBUGGING
-        console.log("hit", enemy.health);
+        //console.log("hit", enemy.health);
       }
     }
 
     if (alive) {
       remainingEnemies.push(enemy);
     }
+  });
+
+  // ======================================================
+  // 1.5 BULLET vs GATES (blocking)
+  // ======================================================
+
+  gates.current.forEach((g) => {
+    g.items.forEach((gate) => {
+      if (gate.passed) return;
+
+      const gateX = projection.projectX(gate.u, g.y, worldOffsetX);
+
+      for (let i = 0; i < bullets.current.length; i++) {
+        const bullet = bullets.current[i];
+
+        if (bullet.hit) continue;
+
+        const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
+
+        const dx = Math.abs(bulletX - gateX);
+        const dy = Math.abs(bullet.y - g.y);
+
+        if (dx < 14 && dy < 14) {
+          // --------------------------------------
+          // 💥 BLOCK BULLET
+          // --------------------------------------
+          bullet.hit = true;
+
+          // --------------------------------------
+          // 🧠 MODIFY GATE
+          // --------------------------------------
+          const damage = bullet.damage || 1;
+
+          gate.health -= damage;
+          gate.value += damage;
+
+          gate.value = Math.min(gate.value, gate.maxHealth);
+
+          gate.flash = 1;
+
+          break; // 👈 IMPORTANT: stop this bullet
+        }
+      }
+    });
   });
 
   enemies.current = remainingEnemies;

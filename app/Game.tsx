@@ -47,6 +47,7 @@ export default function Game() {
   // ======================================================
   const [life, setLife] = useState(100);
   const [score, setScore] = useState(0);
+  const playerPower = useRef(0);
   const [gameOver, setGameOver] = useState(false);
 
   const gameOverRef = useRef(false);
@@ -144,7 +145,18 @@ export default function Game() {
   // PURE HELPERS (NO SIDE EFFECTS)
   // ======================================================
   function getGateLabel(gate) {
-    if (gate.type === "bub") return `+${gate.value} bub`;
+    if (gate.type === "bub") {
+      if (gate.value > 0) {
+        spawnBubs({
+          bubs: bubsRef,
+          count: Math.floor(gate.value),
+          MAX_BUBS,
+          PLAYER_Y,
+        });
+      } else {
+        bubsRef.current.splice(0, Math.abs(Math.floor(gate.value)));
+      }
+    }
     if (gate.type === "life")
       return `${gate.value > 0 ? "+" : ""}${gate.value} HP`;
     if (gate.type === "fastFire") return "Fast Fire";
@@ -175,6 +187,11 @@ export default function Game() {
     if (gate.type === "slowFire") {
       setFireRate((r) => Math.min(1000, r * 1.5));
     }
+
+    // --------------------------------------
+    // 🧠 Track player power gain
+    // --------------------------------------
+    playerPower.current += gate.power || 0;
   }
 
   // ======================================================
@@ -299,6 +316,7 @@ export default function Game() {
         enemies,
         bullets,
         bubs: bubsRef,
+        gates,
         PLAYER_X,
         PLAYER_Y,
         height,
@@ -576,17 +594,50 @@ export default function Game() {
 
             if (!font) return null;
 
-            const label = getGateLabel(gate);
+            const label =
+              gate.value > 0
+                ? `+${Math.floor(gate.value)} bub`
+                : `${Math.floor(gate.value)} bub`;
+
             const scale = 0.4 + ((g.y - roadTopY) / (height - roadTopY)) * 1.2;
 
-            const widthPx = 80 * scale;
+            // --------------------------------------------------
+            // 🎯 LANE WIDTH (3 equal segments)
+            // --------------------------------------------------
+            const laneWidthU = 1 / 3;
+
+            const leftU = gate.u - laneWidthU / 2;
+            const rightU = gate.u + laneWidthU / 2;
+
+            // project both edges
+            const leftX = projection.projectX(leftU, g.y, worldOffsetX.current);
+            const rightX = projection.projectX(
+              rightU,
+              g.y,
+              worldOffsetX.current,
+            );
+
+            const widthPx = rightX - leftX;
             const heightPx = 60 * scale;
+
             const textWidth = font.getTextWidth(label);
+
+            const isPositive = gate.value >= 0;
+
+            const colors = isPositive
+              ? ["rgba(0,255,0,0.6)", "rgba(0,255,0,0.0)"]
+              : ["rgba(255,0,0,0.6)", "rgba(255,0,0,0.0)"];
+
+            // --------------------------------------------------
+            // ✨ FLASH VISUAL (from collisions system)
+            // --------------------------------------------------
+            const flash = gate.flash || 0;
+            const overlayColor = `rgba(255,255,255,${flash})`;
 
             return (
               <Rect
                 key={key}
-                x={x - widthPx / 2}
+                x={leftX}
                 y={g.y - heightPx}
                 width={widthPx}
                 height={heightPx}
@@ -595,11 +646,7 @@ export default function Game() {
                 <LinearGradient
                   start={vec(0, g.y)}
                   end={vec(0, g.y - heightPx)}
-                  colors={
-                    gate.passed
-                      ? ["rgba(150,150,150,0.4)", "rgba(150,150,150,0.0)"]
-                      : ["rgba(0,255,0,0.5)", "rgba(0,255,0,0.0)"]
-                  }
+                  colors={colors}
                 />
                 <SkiaText
                   x={x - textWidth / 2}
@@ -608,14 +655,25 @@ export default function Game() {
                   font={font}
                   color="white"
                 />
+                {/* --------------------------------------
+                    ✨ Flash overlay (hit feedback)
+                -------------------------------------- */}
+                {flash > 0 && (
+                  <Rect
+                    x={leftX}
+                    y={g.y - heightPx}
+                    width={widthPx}
+                    height={heightPx}
+                    color={overlayColor}
+                  />
+                )}
               </Rect>
             );
           };
 
           return (
             <React.Fragment key={i}>
-              {renderGate(g.left, "l" + i)}
-              {renderGate(g.right, "r" + i)}
+              {g.items.map((gate, idx) => renderGate(gate, idx))}
             </React.Fragment>
           );
         })}
