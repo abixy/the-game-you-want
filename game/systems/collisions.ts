@@ -36,51 +36,84 @@ export function handleCollisions({
   let lifeLoss = 0;
 
   // ======================================================
-  // 1. BULLET vs ENEMY
+  // 1. BULLET vs ENEMY (health-based)
   // ======================================================
 
   const remainingEnemies = [];
-  const remainingBullets = [];
+
+  // reset bullet hit flags
+  bullets.current.forEach((b) => {
+    b.hit = false;
+  });
 
   enemies.current.forEach((enemy) => {
-    let hit = false;
+    const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
 
-    bullets.current.forEach((bullet) => {
+    let alive = true;
+
+    for (let i = 0; i < bullets.current.length; i++) {
+      const bullet = bullets.current[i];
+
+      if (bullet.hit) continue;
+
       const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
-      const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
 
       const dx = Math.abs(bulletX - enemyX);
       const dy = Math.abs(bullet.y - enemy.y);
 
-      if (dx < HIT_X && dy < HIT_Y && !hit) {
-        hit = true;
-        scoreGain++;
+      if (dx < HIT_X && dy < HIT_Y) {
+        bullet.hit = true;
+
+        // --------------------------------------
+        // 💥 APPLY DAMAGE
+        // --------------------------------------
+        // ensure health exists (defensive)
+        if (enemy.health == null) {
+          enemy.health = 5;
+        }
+
+        const damage = bullet.damage || 1;
+        enemy.health -= damage;
+
+        // --------------------------------------
+        // ✨ VISUAL FEEDBACK (flash)
+        // --------------------------------------
+        enemy.flash = 1;
+
+        // --------------------------------------
+        // 💥 KNOCKBACK (adds upward push)
+        // --------------------------------------
+        // accumulate knockback so rapid hits stack
+        // scale knockback by bullet type
+        const kb = bullet.type === "sniper" ? 8 : 4;
+
+        // Soft knockback cap to prevent juggling
+        const MAX_KB = 20;
+
+        enemy.knockback = Math.min(MAX_KB, (enemy.knockback || 0) + kb);
+
+        // --------------------------------------
+        // ☠️ CHECK DEATH
+        // --------------------------------------
+        if (enemy.health <= 0) {
+          alive = false;
+          scoreGain++;
+          break; // enemy is dead, stop checking bullets
+        }
+        /// DEBUGGING
+        console.log("hit", enemy.health);
       }
-    });
+    }
 
-    if (!hit) remainingEnemies.push(enemy);
+    if (alive) {
+      remainingEnemies.push(enemy);
+    }
   });
 
-  // ------------------------------------------------------
-  // Remove bullets that hit something
-  // ------------------------------------------------------
-  bullets.current.forEach((bullet) => {
-    const hit = enemies.current.some((enemy) => {
-      const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
-      const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
-
-      const dx = Math.abs(bulletX - enemyX);
-      const dy = Math.abs(bullet.y - enemy.y);
-
-      return dx < HIT_X && dy < HIT_Y;
-    });
-
-    if (!hit) remainingBullets.push(bullet);
-  });
-
-  // Apply filtered lists
   enemies.current = remainingEnemies;
-  bullets.current = remainingBullets;
+
+  // remove bullets that hit something
+  bullets.current = bullets.current.filter((b) => !b.hit);
 
   // ======================================================
   // 2. ENEMY vs PLAYER / BUBS

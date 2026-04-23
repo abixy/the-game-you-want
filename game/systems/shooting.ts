@@ -8,18 +8,21 @@ const BULLET_TYPES = {
   normal: {
     range: 0.6,
     speed: 1.2,
+    damage: 1,
     pattern: "single",
   },
 
   sniper: {
     range: 1.0,
     speed: 2.5,
+    damage: 1,
     pattern: "single",
   },
 
   scatter: {
     range: 0.4,
     speed: 0.9,
+    damage: 1,
     pattern: "spread",
     spread: 0.03,
     count: 3,
@@ -35,7 +38,7 @@ export function fireShots({ playerU, playerY, bubs, bullets }) {
   // --------------------------------------------------
   const shooters = [
     {
-      type: "normal", // 👈 player uses normal bullets
+      type: "normal",
       u: playerU,
       y: playerY,
     },
@@ -81,6 +84,7 @@ export function fireShots({ playerU, playerY, bubs, bullets }) {
         yStart: shooter.y,
         range: config.range,
         speed: config.speed,
+        damage: config.damage,
         type: shooter.type,
       });
     }
@@ -103,6 +107,7 @@ export function fireShots({ playerU, playerY, bubs, bullets }) {
           yStart: shooter.y,
           range: config.range,
           speed: config.speed,
+          damage: config.damage,
           type: shooter.type,
         });
       }

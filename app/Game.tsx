@@ -243,6 +243,7 @@ export default function Game() {
         roadTopY,
         ROAD_MARGIN,
         burstFactorRef: burstFactor,
+        bubs: bubsRef,
       });
 
       updateEnemies({
@@ -552,9 +553,20 @@ export default function Game() {
         {/* Enemies */}
         {enemies.current.map((e, i) => {
           const x = projection.projectX(e.u, e.y, worldOffsetX.current);
+
+          const flash = e.flash || 0;
+
+          const getFlashColor = (base, flash) => {
+            if (flash <= 0) return base;
+
+            return `rgba(255,255,255,${flash})`;
+          };
+
+          const color = flash > 0 ? getFlashColor("red", flash) : "red";
+
           const scale = 0.3 + (e.y / height) * 1.5;
 
-          return <Circle key={i} cx={x} cy={e.y} r={8 * scale} color="red" />;
+          return <Circle key={i} cx={x} cy={e.y} r={8 * scale} color={color} />;
         })}
 
         {/* Gates */}
