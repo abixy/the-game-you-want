@@ -1,6 +1,7 @@
 import {
   Canvas,
   Circle,
+  Group,
   LinearGradient,
   Path,
   Rect,
@@ -42,11 +43,17 @@ import { createProjection } from "../game/utils/projection";
 export default function Game() {
   const [tick, setTick] = useState(0);
   const font = useFont(require("../assets/fonts/Inter-Bold.ttf"), 24);
+  const GAME_SPEED = 0.4; // try 0.4–0.8
 
   // ======================================================
   // GAME STATE
   // ======================================================
   const [life, setLife] = useState(100);
+  const lifeRef = useRef(life);
+  useEffect(() => {
+    lifeRef.current = life;
+  }, [life]);
+
   const [score, setScore] = useState(0);
   const playerPower = useRef(0);
   const [gameOver, setGameOver] = useState(false);
@@ -146,14 +153,17 @@ export default function Game() {
   // PURE HELPERS (NO SIDE EFFECTS)
   // ======================================================
   function getGateLabel(gate) {
+    function formatValue(v) {
+      const val = Math.round(v);
+      return val > 0 ? `+${val}` : `${val}`;
+    }
+
     if (gate.type === "bub") {
-      return gate.value > 0
-        ? `+${Math.floor(gate.value)} bub`
-        : `${Math.floor(gate.value)} bub`;
+      return `${formatValue(gate.value)} bub`;
     }
 
     if (gate.type === "life") {
-      return `${gate.value > 0 ? "+" : ""}${gate.value} HP`;
+      return `${formatValue(gate.value)} HP`;
     }
 
     if (gate.type === "fastFire") return "Fast Fire";
@@ -165,17 +175,46 @@ export default function Game() {
   // GATE EFFECTS (SIDE EFFECTS)
   // ======================================================
   function applyGate(gate) {
+    gate.passed = true;
+
+    playerPower.current = Math.max(-100, Math.min(300, playerPower.current));
+
+    // --------------------------------------
+    // 🧬 BUB GATE EFFECT (positive OR negative)
+    // --------------------------------------
     if (gate.type === "bub") {
-      spawnBubs({
-        bubs: bubsRef,
-        count: gate.value,
-        MAX_BUBS,
-        PLAYER_Y,
+      // --------------------------------------
+      // 🧠 Stable integer value (no drift issues)
+      // --------------------------------------
+      const amount = Math.round(gate.value);
+
+      if (amount > 0) {
+        // ADD bubs
+        spawnBubs({
+          bubs: bubsRef,
+          count: amount,
+          MAX_BUBS,
+          PLAYER_Y,
+        });
+      } else if (amount < 0) {
+        // REMOVE bubs
+        const removeCount = Math.min(Math.abs(amount), bubsRef.current.length);
+
+        bubsRef.current.splice(0, removeCount);
+      }
+
+      //DEBUG LOGGING
+      console.log("APPLY GATE", gate.value);
+      console.log("GATE APPLY", {
+        raw: gate.value,
+        applied: amount,
       });
     }
 
     if (gate.type === "life") {
-      setLife((l) => Math.max(0, Math.min(100, l + gate.value)));
+      const amount = Math.round(gate.value);
+
+      setLife((l) => Math.max(0, Math.min(100, l + amount)));
     }
 
     if (gate.type === "fastFire") {
@@ -203,7 +242,8 @@ export default function Game() {
       if (gameOverRef.current) return;
 
       const now = Date.now();
-      const dt = (now - lastTime) / 1000;
+      const rawDt = (now - lastTime) / 1000;
+      const dt = rawDt * GAME_SPEED;
       lastTime = now;
 
       // ----------------------------
@@ -259,6 +299,8 @@ export default function Game() {
         ROAD_MARGIN,
         burstFactorRef: burstFactor,
         bubs: bubsRef,
+        playerPower,
+        dt,
       });
 
       updateEnemies({
@@ -266,6 +308,7 @@ export default function Game() {
         roadTopY,
         height,
         ROAD_MARGIN,
+        dt,
       });
 
       // ----------------------------
@@ -289,10 +332,11 @@ export default function Game() {
         nextGateTimeRef: nextGateTime,
         getRandomGateDelay,
         roadTopY,
-        GATE_POOLS,
+        life: lifeRef.current,
+        bubs: bubsRef,
       });
 
-      updateGates({ gates, roadTopY, height });
+      updateGates({ gates, roadTopY, height, dt });
 
       handleGateEffects({
         gates,
@@ -590,14 +634,27 @@ export default function Game() {
           const renderGate = (gate, key) => {
             const x = projection.projectX(gate.u, g.y, worldOffsetX.current);
 
+            // pulsing gates
+            const time = tick * 16;
+            const pulse = 0.6 + Math.sin(time * 0.005 + gate.u * 10) * 0.4;
+
             if (!font) return null;
 
-            const label =
-              gate.value > 0
-                ? `+${Math.floor(gate.value)} bub`
-                : `${Math.floor(gate.value)} bub`;
+            const label = getGateLabel(gate);
 
-            const scale = 0.4 + ((g.y - roadTopY) / (height - roadTopY)) * 1.2;
+            // --------------------------------------
+            // 📏 GATE SCALE (geometry)
+            // --------------------------------------
+            const t = (g.y - roadTopY) / (height - roadTopY);
+            const clamped = Math.max(0, Math.min(1, t));
+
+            // used for gate size
+            const scale = 0.4 + clamped * 1.2;
+
+            // --------------------------------------
+            // 📝 TEXT SCALE (separate from geometry)
+            // --------------------------------------
+            const textScale = Math.max(0.6, 0.5 + Math.pow(clamped, 1.2) * 1.0);
 
             // --------------------------------------------------
             // 🎯 LANE WIDTH (3 equal segments)
@@ -618,13 +675,20 @@ export default function Game() {
             const widthPx = rightX - leftX;
             const heightPx = 60 * scale;
 
+            // --------------------------------------
+            // 🧱 SIDE POSTS (visual anchors)
+            // --------------------------------------
+            const POST_WIDTH = 6;
+
             const textWidth = font.getTextWidth(label);
 
             const isPositive = gate.value >= 0;
 
+            const baseAlpha = 0.4 + pulse * 0.4;
+
             const colors = isPositive
-              ? ["rgba(0,255,0,0.6)", "rgba(0,255,0,0.0)"]
-              : ["rgba(255,0,0,0.6)", "rgba(255,0,0,0.0)"];
+              ? [`rgba(0,255,0,${baseAlpha})`, "rgba(0,255,0,0.0)"]
+              : [`rgba(255,0,0,${baseAlpha})`, "rgba(255,0,0,0.0)"];
 
             // --------------------------------------------------
             // ✨ FLASH VISUAL (from collisions system)
@@ -644,18 +708,67 @@ export default function Game() {
                 height={heightPx}
                 opacity={gate.passed ? 0.3 : 1}
               >
+                <Rect
+                  x={leftX - POST_WIDTH / 2}
+                  y={g.y - heightPx}
+                  width={POST_WIDTH}
+                  height={heightPx}
+                  color="rgba(255,255,255,0.25)"
+                />
+                <Rect
+                  x={rightX - POST_WIDTH / 2}
+                  y={g.y - heightPx}
+                  width={POST_WIDTH}
+                  height={heightPx}
+                  color="rgba(255,255,255,0.25)"
+                />
+                {/*  -------------------------------------- // 🚧 TOP BAR
+                (connects posts) // -------------------------------------- */}
+                <Rect
+                  x={leftX}
+                  y={g.y - heightPx}
+                  width={widthPx}
+                  height={6}
+                  color="rgba(255,255,255,0.3)"
+                />
+                {/* --------------------------------------
+                    ⚡ ENERGY CORE (center glow)
+                -------------------------------------- */}
+                <Rect
+                  x={x - widthPx * 0.15}
+                  y={g.y - heightPx * 0.7}
+                  width={widthPx * 0.3}
+                  height={heightPx * 0.4}
+                  color={
+                    isPositive
+                      ? `rgba(0,255,150,${0.3 + pulse * 0.4})`
+                      : `rgba(255,80,80,${0.3 + pulse * 0.4})`
+                  }
+                />
                 <LinearGradient
                   start={vec(0, g.y)}
                   end={vec(0, g.y - heightPx)}
                   colors={colors}
                 />
-                <SkiaText
-                  x={x - textWidth / 2}
-                  y={g.y - heightPx / 2}
-                  text={label}
-                  font={font}
-                  color="white"
-                />
+                {/* --------------------------------------
+                    📝 SCALED LABEL
+                -------------------------------------- */}
+                <Group
+                  transform={[
+                    { translateX: x },
+                    { translateY: g.y - heightPx / 2 },
+                    { scale: textScale },
+                    { translateX: -textWidth / 2 },
+                  ]}
+                >
+                  <SkiaText
+                    x={0}
+                    y={0}
+                    text={label}
+                    font={font}
+                    color="white"
+                  />
+                </Group>
                 {/* --------------------------------------
                     ✨ Flash overlay (hit feedback)
                 -------------------------------------- */}

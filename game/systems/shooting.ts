@@ -15,7 +15,7 @@ const BULLET_TYPES = {
   sniper: {
     range: 1.0,
     speed: 2.5,
-    damage: 1,
+    damage: 3,
     pattern: "single",
   },
 
@@ -58,16 +58,15 @@ export function fireShots({ playerU, playerY, bubs, bullets }) {
   // --------------------------------------------------
   // STEP 3: Fire with ripple delay
   // --------------------------------------------------
+  // --------------------------------------------------
+  // 🎯 BULLET CLAMP (very light, prevents edge glitches)
+  // --------------------------------------------------
+  const BULLET_MARGIN = 0.01;
+
+  const clampU = (u) => Math.max(BULLET_MARGIN, Math.min(1 - BULLET_MARGIN, u));
+
   shuffled.forEach((shooter, i) => {
     const delay = Math.min(i * RIPPLE_STEP, MAX_RIPPLE_DELAY);
-
-    // --------------------------------------------------
-    // 🎯 BULLET CLAMP (very light, prevents edge glitches)
-    // --------------------------------------------------
-    const BULLET_MARGIN = 0.01;
-
-    const clampU = (u) =>
-      Math.max(BULLET_MARGIN, Math.min(1 - BULLET_MARGIN, u));
 
     const config = BULLET_TYPES[shooter.type] || BULLET_TYPES.normal;
 
@@ -99,10 +98,12 @@ export function fireShots({ playerU, playerY, bubs, bullets }) {
       // symmetrical offsets (e.g. [-1, 0, 1] for 3 shots)
       const half = Math.floor(config.count / 2);
 
-      for (let o = -half; o <= half; o++) {
+      const u = center + o * spread;
+
+      if (u >= 0 && u <= 1) {
         bullets.current.push({
           spawnTime,
-          u: clampU(center + o * spread),
+          u,
           y: shooter.y,
           yStart: shooter.y,
           range: config.range,

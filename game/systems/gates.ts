@@ -35,8 +35,65 @@ export function getGatePower(gate) {
 }
 
 // ======================================================
+// 🧠 PROCEDURAL GATE GENERATION
+// ======================================================
+function generateGate({ lifeNeed, offenseNeed }) {
+  // --------------------------------------
+  // Decide gate TYPE
+  // --------------------------------------
+  let type;
+
+  // --------------------------------------
+  // 🎯 Weighted type selection
+  // --------------------------------------
+  const lifeWeight = lifeNeed * 1.2;
+  const bubWeight = offenseNeed * 1.0;
+
+  const total = lifeWeight + bubWeight + 0.01;
+
+  const roll = Math.random() * total;
+
+  if (roll < lifeWeight) {
+    type = "life";
+  } else {
+    type = "bub";
+  }
+
+  // --------------------------------------
+  // Decide magnitude (difficulty-aware later)
+  // --------------------------------------
+  let magnitude;
+
+  if (type === "life") {
+    // bigger help when low
+    magnitude = 5 + Math.floor(Math.pow(lifeNeed, 0.8) * 20);
+  }
+
+  if (type === "bub") {
+    magnitude = 3 + Math.floor(Math.pow(offenseNeed, 0.8) * 8);
+  }
+
+  // --------------------------------------
+  // Add randomness (important!)
+  // --------------------------------------
+  magnitude += Math.floor(Math.random() * 4) - 2; // ±2 variance
+
+  magnitude = Math.max(3, magnitude); // clamp minimum
+
+  console.log("GEN GATE →", {
+    lifeNeed,
+    offenseNeed,
+    chosenType: type,
+  });
+
+  return {
+    type,
+    baseValue: magnitude,
+  };
+}
+
+// ======================================================
 // 🧬 SPAWN GATES
-// Creates a pair of gates (left + right) at intervals
 // ======================================================
 export function spawnGates({
   gates,
@@ -44,73 +101,53 @@ export function spawnGates({
   nextGateTimeRef,
   getRandomGateDelay,
   roadTopY,
-  GATE_POOLS,
+  life,
+  bubs,
 }) {
-  // ⏱️ Not time yet → do nothing
   if (now < nextGateTimeRef.current) return;
 
-  // 📍 Spawn slightly below top of road (feels better visually)
   const y = roadTopY;
 
-  // 🎲 Pick a random gate pair from pool
-  const pool = GATE_POOLS[Math.floor(Math.random() * GATE_POOLS.length)];
-
-  // 🧱 Create variable-width gate set (1–3 lanes)
-  const laneCount = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
-
-  const gatesForRow = [];
+  // --------------------------------------
+  // 🧠 Compute needs HERE
+  // --------------------------------------
+  const lifeNeed = 1 - life / 100;
+  const offenseNeed = Math.max(0, 1 - bubs.current.length / 20);
 
   // --------------------------------------
-  // RANDOM LANE SELECTION
+  // 🎲 Decide how many lanes (1–3)
   // --------------------------------------
-  const availableLanes = [0, 1, 2];
+  const laneCount = Math.floor(Math.random() * 3) + 1;
 
-  // shuffle lanes
-  availableLanes.sort(() => Math.random() - 0.5);
-
-  // pick N lanes
+  const availableLanes = [0, 1, 2].sort(() => Math.random() - 0.5);
   const selected = availableLanes.slice(0, laneCount);
 
-  selected.forEach((laneIndex, i) => {
-    const laneU = (laneIndex + 0.5) / 3;
+  const items = selected.map((laneIndex) => {
+    const { type, baseValue } = generateGate({ lifeNeed, offenseNeed });
 
-    const base = pool[i % pool.length];
-
-    const magnitude = base.value || 10;
-
-    gatesForRow.push({
-      ...base,
-      u: laneU,
+    return {
+      type,
+      u: (laneIndex + 0.5) / 3,
       passed: false,
 
-      // --------------------------------------
-      // NEW: health/value system
-      // --------------------------------------
-      health: Math.abs(magnitude),
-      maxHealth: Math.abs(magnitude),
+      health: baseValue,
+      maxHealth: baseValue,
 
-      // starts negative (danger)
-      value: -Math.abs(magnitude),
-    });
+      // always start negative
+      value: -baseValue,
+    };
   });
 
-  gates.current.push({
-    y,
-    items: gatesForRow,
-  });
+  gates.current.push({ y, items });
 
-  // 🔁 Schedule next spawn
   nextGateTimeRef.current = now + getRandomGateDelay();
-
-  // 🐛 DEBUG (optional)
-  // console.log("Spawned gate pair");
 }
 
 // ======================================================
 // ⬇️ UPDATE GATES (MOVEMENT)
 // Moves gates down the road using perspective scaling
 // ======================================================
-export function updateGates({ gates, roadTopY, height }) {
+export function updateGates({ gates, roadTopY, height, dt }) {
   gates.current.forEach((g) => {
     // --------------------------------------
     // 🚗 Move gate row down the road
@@ -121,9 +158,9 @@ export function updateGates({ gates, roadTopY, height }) {
     // 🔧 Safe to tweak:
     // - exponent (2.5) → acceleration curve
     // - multiplier (7) → intensity
-    const speed = (1 + Math.pow(t, 2.5) * 7) * 2;
+    const speed = (1 + Math.pow(t, 2.5) * 7) * 180;
 
-    g.y += speed;
+    g.y += speed * dt;
 
     // --------------------------------------
     // ✨ Per-gate updates (flash decay, etc.)
@@ -135,7 +172,7 @@ export function updateGates({ gates, roadTopY, height }) {
       // Fade hit flash over time
       // ----------------------------
       if (gate.flash) {
-        gate.flash *= 0.85;
+        gate.flash *= Math.pow(0.85, dt * 60);
 
         if (gate.flash < 0.05) {
           gate.flash = 0;

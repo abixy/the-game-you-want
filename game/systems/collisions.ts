@@ -135,8 +135,8 @@ export function handleCollisions({
         const leftU = gate.u - laneWidthU / 2;
         const rightU = gate.u + laneWidthU / 2;
 
-        const leftX = projection.projectX(leftU, bullet.y, worldOffsetX);
-        const rightX = projection.projectX(rightU, bullet.y, worldOffsetX);
+        const leftX = projection.projectX(leftU, g.y, worldOffsetX);
+        const rightX = projection.projectX(rightU, g.y, worldOffsetX);
 
         // --------------------------------------
         // Hit test
@@ -150,23 +150,23 @@ export function handleCollisions({
           // --------------------------------------
           const damage = bullet.damage || 1;
 
-          gate.health -= damage;
-
-          // Limit runaway gate positive rewards!
-          const MAX_POSITIVE = gate.maxHealth; // or 2x, or 3x later
-
-          if (gate.health < -MAX_POSITIVE) {
-            gate.health = -MAX_POSITIVE;
-          }
+          // --------------------------------------
+          // 🧠 Integer-safe health system
+          // Prevents float drift bugs
+          // --------------------------------------
+          gate.health = Math.round(gate.health - damage);
 
           // --------------------------------------
-          // CONVERT HEALTH → VALUE
-          // negative → zero → positive
+          // Clamp health to symmetric bounds
+          // --------------------------------------
+          const MAX = gate.maxHealth;
+
+          gate.health = Math.max(-MAX, Math.min(MAX, gate.health));
+
+          // --------------------------------------
+          // DIRECT VALUE SYSTEM (clean + stable)
           // --------------------------------------
           gate.value = -gate.health;
-
-          const progress = gate.maxHealth - gate.health;
-          gate.value = progress - gate.maxHealth;
 
           gate.flash = 1;
 
@@ -182,52 +182,56 @@ export function handleCollisions({
   bullets.current = bullets.current.filter((b) => !b.hit);
 
   // ======================================================
-  // 2. ENEMY vs PLAYER / BUBS
+  // 2. ENEMY vs PLAYER / BUBS (NO LIFE DAMAGE)
+  // Bubs absorb enemies. Player collision does NOT reduce life.
   // ======================================================
 
   const survivors = [];
 
   enemies.current.forEach((enemy) => {
-    let hit = false;
+    let destroyed = false;
 
-    // Convert enemy u → screen x
     const enemyX = projection.projectX(enemy.u, enemy.y, worldOffsetX);
 
     // -------------------------
-    // PLAYER COLLISION
+    // BUB COLLISIONS (absorb hit)
     // -------------------------
-    if (
-      Math.abs(enemyX - PLAYER_X.current) < PLAYER_HIT_RADIUS &&
-      Math.abs(enemy.y - PLAYER_Y) < PLAYER_HIT_RADIUS
-    ) {
-      lifeLoss++;
-      hit = true;
-    }
+    for (let i = 0; i < bubs.current.length; i++) {
+      const bub = bubs.current[i];
 
-    // -------------------------
-    // BUB COLLISIONS
-    // -------------------------
-    if (!hit) {
-      for (let i = 0; i < bubs.current.length; i++) {
-        const bub = bubs.current[i];
+      const bubX = projection.projectX(bub.u, bub.y, worldOffsetX);
 
-        const bubX = projection.projectX(bub.u, bub.y, worldOffsetX);
+      if (
+        Math.abs(enemyX - bubX) < BUB_HIT_RADIUS &&
+        Math.abs(enemy.y - bub.y) < BUB_HIT_RADIUS
+      ) {
+        // Remove THIS bub
+        bubs.current.splice(i, 1);
 
-        if (
-          Math.abs(enemyX - bubX) < BUB_HIT_RADIUS &&
-          Math.abs(enemy.y - bub.y) < BUB_HIT_RADIUS
-        ) {
-          // Remove THIS bub only
-          bubs.current.splice(i, 1);
-
-          lifeLoss++;
-          hit = true;
-          break;
-        }
+        // Enemy is destroyed by bub
+        destroyed = true;
+        break;
       }
     }
 
-    if (!hit) survivors.push(enemy);
+    // -------------------------
+    // PLAYER COLLISION (no damage)
+    // Optional: you could add feedback here later
+    // -------------------------
+    if (!destroyed) {
+      const hitPlayer =
+        Math.abs(enemyX - PLAYER_X.current) < PLAYER_HIT_RADIUS &&
+        Math.abs(enemy.y - PLAYER_Y) < PLAYER_HIT_RADIUS;
+
+      if (hitPlayer) {
+        // Enemy is removed, but no life loss
+        destroyed = true;
+      }
+    }
+
+    if (!destroyed) {
+      survivors.push(enemy);
+    }
   });
 
   enemies.current = survivors;

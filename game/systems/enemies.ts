@@ -7,6 +7,8 @@ export function spawnEnemies({
   ROAD_MARGIN,
   burstFactorRef,
   bubs,
+  playerPower,
+  dt,
 }) {
   const time = Date.now() * 0.001;
 
@@ -16,30 +18,45 @@ export function spawnEnemies({
   const raw = (Math.sin(time) + 1) / 2;
   burstFactorRef.current = Math.pow(raw, 3);
 
-  const baseChance = 0.001 + burstFactorRef.current * 0.25;
+  const baseChance = 0.001 + burstFactorRef.current * 0.35;
 
   // --------------------------------------------------
-  // 🧠 POWER + PRESSURE
+  // 🧠 PLAYER POWER (multi-source)
   // --------------------------------------------------
-  const playerPower = 1 + bubs.current.length;
+
+  // base survivability
+  const basePower = 1;
+
+  // bubs = sustained DPS
+  const bubPower = bubs.current.length;
+
+  // gate power = long-term scaling (dampened)
+  const gatePower = (playerPower.current || 0) * 0.05;
+
+  // final player power
+  const totalPlayerPower = basePower + bubPower + gatePower;
+
+  // --------------------------------------------------
+  // 🧠 ENEMY POWER
+  // --------------------------------------------------
   const enemyPower = enemies.current.length;
 
-  const pressure = playerPower > 0 ? enemyPower / playerPower : 999;
+  // avoid divide-by-zero
+  const pressure = totalPlayerPower > 0 ? enemyPower / totalPlayerPower : 999;
 
   // --------------------------------------------------
   // 🎯 TARGET PRESSURE (tune this!)
   // --------------------------------------------------
-  const TARGET_PRESSURE = 1.8;
+  const TARGET_PRESSURE = 1.5 + (playerPower.current || 0) * 0.002;
 
   // difference from target
   const diff = pressure - TARGET_PRESSURE;
 
-  // --------------------------------------------------
-  // 🎛️ SPAWN MODIFIER (soft adjustment)
-  // --------------------------------------------------
-  // Negative diff → spawn more
-  // Positive diff → spawn less
-  const modifier = 1 - diff * 0.5;
+  // --------------------------------------
+  // Smooth logistic-style adjustment
+  // --------------------------------------
+  const strength = 0.6; // tuning knob
+  const modifier = 1 / (1 + diff * strength);
 
   // clamp to avoid extremes
   const spawnModifier = Math.max(0.3, Math.min(2.0, modifier)); // Controls how extreme things can get.
@@ -49,7 +66,7 @@ export function spawnEnemies({
   // --------------------------------------------------
   // 🎲 SPAWN DECISION
   // --------------------------------------------------
-  if (Math.random() < finalChance) {
+  if (Math.random() < finalChance * dt * 60) {
     const u = ROAD_MARGIN + Math.random() * (1 - ROAD_MARGIN * 2);
 
     enemies.current.push({
@@ -61,18 +78,15 @@ export function spawnEnemies({
 }
 
 // ======================================================
-// ⬇️ UPDATE ENEMIES (movement + feedback)
-// ======================================================
-// ======================================================
 // ⬇️ UPDATE ENEMIES (movement + knockback + flash)
 // ======================================================
-export function updateEnemies({ enemies, roadTopY, height, ROAD_MARGIN }) {
+export function updateEnemies({ enemies, roadTopY, height, ROAD_MARGIN, dt }) {
   enemies.current.forEach((e) => {
     // --------------------------------------
     // Perspective-based forward speed
     // --------------------------------------
     const t = (e.y - roadTopY) / (height - roadTopY);
-    const baseSpeed = 0.2 + Math.pow(t, 1.2) * 10;
+    const baseSpeed = 60 + Math.pow(t, 1.2) * 600;
 
     // --------------------------------------
     // 💥 APPLY KNOCKBACK (opposes forward motion)
@@ -80,13 +94,13 @@ export function updateEnemies({ enemies, roadTopY, height, ROAD_MARGIN }) {
     const knockback = e.knockback || 0;
 
     // Net movement = forward speed minus knockback
-    e.y += baseSpeed - knockback;
+    e.y += baseSpeed * dt - knockback * dt * 60;
 
     // --------------------------------------
     // Decay knockback over time
     // --------------------------------------
     if (e.knockback) {
-      e.knockback *= 0.7;
+      e.knockback *= Math.pow(0.7, dt * 60);
 
       if (e.knockback < 0.3) {
         e.knockback = 0;
