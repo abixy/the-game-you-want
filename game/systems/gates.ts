@@ -98,21 +98,43 @@ function generateGate({ lifeNeed, offenseNeed }) {
 export function spawnGates({
   gates,
   now,
-  nextGateTimeRef,
-  getRandomGateDelay,
+  lastGateSpawn,
   roadTopY,
   life,
   bubs,
 }) {
-  if (now < nextGateTimeRef.current) return;
-
   const y = roadTopY;
 
-  // --------------------------------------
-  // 🧠 Compute needs HERE
-  // --------------------------------------
+  // ======================================================
+  // 🧠 NEED-BASED SPAWN CONTROL (FIXED)
+  // ======================================================
+
+  const MIN_COOLDOWN = 10000;
+
+  // cooldown gate
+  if (now - lastGateSpawn.current < MIN_COOLDOWN) return;
+
+  // needs
   const lifeNeed = 1 - life / 100;
   const offenseNeed = Math.max(0, 1 - bubs.current.length / 20);
+
+  // blend needs
+  const needScore = lifeNeed * 0.7 + offenseNeed * 0.5;
+
+  // --------------------------------------
+  // 🎯 PER-FRAME SPAWN CHANCE
+  // --------------------------------------
+  // this is the missing ingredient
+  const BASE_RATE = 0.01; // ← tune this (VERY important)
+
+  // dt-normalized spawn chance
+  const spawnChance = BASE_RATE * needScore;
+
+  // roll EVERY FRAME
+  if (Math.random() > spawnChance) return;
+
+  // ✅ spawn allowed
+  lastGateSpawn.current = now;
 
   // --------------------------------------
   // 🎲 Decide how many lanes (1–3)
@@ -139,8 +161,6 @@ export function spawnGates({
   });
 
   gates.current.push({ y, items });
-
-  nextGateTimeRef.current = now + getRandomGateDelay();
 }
 
 // ======================================================

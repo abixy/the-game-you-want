@@ -121,33 +121,7 @@ export default function Game() {
   // GATE SYSTEM STATE
   // ======================================================
   const gates = useRef<any[]>([]);
-  const nextGateTime = useRef(0);
-
-  const MIN_GATE_TIME = 8000;
-  const MAX_GATE_TIME = 14000;
-
-  function getRandomGateDelay() {
-    return MIN_GATE_TIME + Math.random() * (MAX_GATE_TIME - MIN_GATE_TIME);
-  }
-
-  const GATE_POOLS = [
-    [
-      { type: "bub", value: 5 },
-      { type: "life", value: 10 },
-    ],
-    [
-      { type: "life", value: 30 },
-      { type: "bub", value: 5 },
-    ],
-    [
-      { type: "bub", value: 5 },
-      { type: "life", value: 15 },
-    ],
-    [
-      { type: "bub", value: 5 },
-      { type: "life", value: 15 },
-    ],
-  ];
+  const lastGateSpawn = useRef(0);
 
   // ======================================================
   // PURE HELPERS (NO SIDE EFFECTS)
@@ -235,7 +209,6 @@ export default function Game() {
   // MAIN GAME LOOP
   // ======================================================
   useEffect(() => {
-    nextGateTime.current = Date.now() + getRandomGateDelay();
     let lastTime = Date.now();
 
     const interval = setInterval(() => {
@@ -329,8 +302,7 @@ export default function Game() {
       spawnGates({
         gates,
         now,
-        nextGateTimeRef: nextGateTime,
-        getRandomGateDelay,
+        lastGateSpawn,
         roadTopY,
         life: lifeRef.current,
         bubs: bubsRef,
@@ -403,7 +375,6 @@ export default function Game() {
           gates.current = [];
           bubsRef.current = [];
           lastShot.current = 0;
-          nextGateTime.current = Date.now() + getRandomGateDelay();
 
           setLife(100);
           setScore(0);
