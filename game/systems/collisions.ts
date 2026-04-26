@@ -111,45 +111,66 @@ export function handleCollisions({
     }
   });
 
-  // ======================================================
-  // 1.5 BULLET vs GATES (blocking)
-  // ======================================================
-
+  // ------------------------------------------------------
+  // BULLET vs GATE (FULL WIDTH)
+  // ------------------------------------------------------
   gates.current.forEach((g) => {
     g.items.forEach((gate) => {
       if (gate.passed) return;
 
-      const gateX = projection.projectX(gate.u, g.y, worldOffsetX);
-
+      // --------------------------------------
+      // Project bullet position
+      // --------------------------------------
       for (let i = 0; i < bullets.current.length; i++) {
         const bullet = bullets.current[i];
-
         if (bullet.hit) continue;
 
         const bulletX = projection.projectX(bullet.u, bullet.y, worldOffsetX);
 
-        const dx = Math.abs(bulletX - gateX);
+        // --------------------------------------
+        // Compute FULL lane width in screen space
+        // --------------------------------------
+        const laneWidthU = 1 / 3;
+
+        const leftU = gate.u - laneWidthU / 2;
+        const rightU = gate.u + laneWidthU / 2;
+
+        const leftX = projection.projectX(leftU, bullet.y, worldOffsetX);
+        const rightX = projection.projectX(rightU, bullet.y, worldOffsetX);
+
+        // --------------------------------------
+        // Hit test
+        // --------------------------------------
+        const withinX = bulletX >= leftX && bulletX <= rightX;
         const dy = Math.abs(bullet.y - g.y);
 
-        if (dx < 14 && dy < 14) {
+        if (withinX && dy < HIT_Y) {
           // --------------------------------------
-          // 💥 BLOCK BULLET
-          // --------------------------------------
-          bullet.hit = true;
-
-          // --------------------------------------
-          // 🧠 MODIFY GATE
+          // APPLY DAMAGE
           // --------------------------------------
           const damage = bullet.damage || 1;
 
           gate.health -= damage;
-          gate.value += damage;
 
-          gate.value = Math.min(gate.value, gate.maxHealth);
+          // Limit runaway gate positive rewards!
+          const MAX_POSITIVE = gate.maxHealth; // or 2x, or 3x later
+
+          if (gate.health < -MAX_POSITIVE) {
+            gate.health = -MAX_POSITIVE;
+          }
+
+          // --------------------------------------
+          // CONVERT HEALTH → VALUE
+          // negative → zero → positive
+          // --------------------------------------
+          gate.value = -gate.health;
+
+          const progress = gate.maxHealth - gate.health;
+          gate.value = progress - gate.maxHealth;
 
           gate.flash = 1;
 
-          break; // 👈 IMPORTANT: stop this bullet
+          bullet.hit = true;
         }
       }
     });

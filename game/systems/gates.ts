@@ -12,7 +12,7 @@
 // Converts gate effects → abstract "power" value
 // This will later drive difficulty balancing
 // ======================================================
-function getGatePower(gate) {
+export function getGatePower(gate) {
   if (gate.type === "bub") {
     // each bub ≈ small sustained DPS increase
     return gate.value * 2;
@@ -60,8 +60,19 @@ export function spawnGates({
 
   const gatesForRow = [];
 
-  for (let i = 0; i < laneCount; i++) {
-    const laneU = (i + 0.5) / 3; // thirds: 0.166, 0.5, 0.833
+  // --------------------------------------
+  // RANDOM LANE SELECTION
+  // --------------------------------------
+  const availableLanes = [0, 1, 2];
+
+  // shuffle lanes
+  availableLanes.sort(() => Math.random() - 0.5);
+
+  // pick N lanes
+  const selected = availableLanes.slice(0, laneCount);
+
+  selected.forEach((laneIndex, i) => {
+    const laneU = (laneIndex + 0.5) / 3;
 
     const base = pool[i % pool.length];
 
@@ -81,7 +92,7 @@ export function spawnGates({
       // starts negative (danger)
       value: -Math.abs(magnitude),
     });
-  }
+  });
 
   gates.current.push({
     y,

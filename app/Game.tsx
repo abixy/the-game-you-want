@@ -28,6 +28,7 @@ import { handleCollisions } from "../game/systems/collisions";
 import { spawnEnemies, updateEnemies } from "../game/systems/enemies";
 import {
   cleanupGates,
+  getGatePower,
   handleGateEffects,
   spawnGates,
   updateGates,
@@ -146,20 +147,17 @@ export default function Game() {
   // ======================================================
   function getGateLabel(gate) {
     if (gate.type === "bub") {
-      if (gate.value > 0) {
-        spawnBubs({
-          bubs: bubsRef,
-          count: Math.floor(gate.value),
-          MAX_BUBS,
-          PLAYER_Y,
-        });
-      } else {
-        bubsRef.current.splice(0, Math.abs(Math.floor(gate.value)));
-      }
+      return gate.value > 0
+        ? `+${Math.floor(gate.value)} bub`
+        : `${Math.floor(gate.value)} bub`;
     }
-    if (gate.type === "life")
+
+    if (gate.type === "life") {
       return `${gate.value > 0 ? "+" : ""}${gate.value} HP`;
+    }
+
     if (gate.type === "fastFire") return "Fast Fire";
+
     return "";
   }
 
@@ -189,9 +187,9 @@ export default function Game() {
     }
 
     // --------------------------------------
-    // 🧠 Track player power gain
+    // APPLY GATE POWER TO PLAYER
     // --------------------------------------
-    playerPower.current += gate.power || 0;
+    playerPower.current += getGatePower(gate);
   }
 
   // ======================================================
@@ -632,7 +630,10 @@ export default function Game() {
             // ✨ FLASH VISUAL (from collisions system)
             // --------------------------------------------------
             const flash = gate.flash || 0;
-            const overlayColor = `rgba(255,255,255,${flash})`;
+            const overlayColor =
+              gate.value >= 0
+                ? `rgba(200,255,200,${flash * 0.6})`
+                : `rgba(255,200,200,${flash * 0.6})`;
 
             return (
               <Rect
